@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { loadRuntimeSettings } from "@/lib/serverRuntimeSettings";
 
 const LLM_BASE_URL = process.env.UVB_LLM_BASE_URL ?? "http://127.0.0.1:8003/v1";
 const LLM_MODEL = process.env.UVB_LLM_MODEL ?? "qwen36-35b-a3b-heretic-nvfp4";
@@ -51,16 +52,18 @@ export async function POST(request: NextRequest) {
   }
 
   const userMessages = Array.isArray(body.messages) ? body.messages : [];
-  const baseUrl = normalizeBaseUrl(body.settings?.baseUrl || LLM_BASE_URL);
-  const model = body.settings?.model?.trim() || LLM_MODEL;
-  const apiKey = body.settings?.apiKey?.trim() || LLM_API_KEY;
-  const temperature = Number.isFinite(body.settings?.temperature)
-    ? Number(body.settings?.temperature)
+  const runtime = await loadRuntimeSettings();
+  const settings = body.settings ?? runtime.modelSettings;
+  const baseUrl = normalizeBaseUrl(settings.baseUrl || LLM_BASE_URL);
+  const model = settings.model?.trim() || LLM_MODEL;
+  const apiKey = settings.apiKey?.trim() || LLM_API_KEY;
+  const temperature = Number.isFinite(settings.temperature)
+    ? Number(settings.temperature)
     : 0.7;
-  const maxTokens = Number.isFinite(body.settings?.maxTokens)
-    ? Number(body.settings?.maxTokens)
+  const maxTokens = Number.isFinite(settings.maxTokens)
+    ? Number(settings.maxTokens)
     : 1200;
-  const enableThinking = body.settings?.enableThinking ?? false;
+  const enableThinking = settings.enableThinking ?? false;
 
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },

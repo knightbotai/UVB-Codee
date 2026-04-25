@@ -127,11 +127,21 @@ export default function SettingsPage() {
 
   const saveCurrentModelSettings = () => {
     saveModelSettings(modelSettings);
+    void fetch("/api/settings/runtime", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelSettings }),
+    });
     setModelStatus({ state: "saved", message: "Saved. Chat will use this model now." });
   };
 
   const saveCurrentVoiceSettings = () => {
     saveVoiceSettings(voiceSettings);
+    void fetch("/api/settings/runtime", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voiceSettings }),
+    });
     setVoiceStatus({ state: "saved", message: "Saved. Chat voice will use these endpoints now." });
   };
 
@@ -200,12 +210,22 @@ export default function SettingsPage() {
         const nextModelSettings = { ...DEFAULT_MODEL_SETTINGS, ...data.modelSettings };
         setModelSettings(nextModelSettings);
         saveModelSettings(nextModelSettings);
+        void fetch("/api/settings/runtime", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modelSettings: nextModelSettings }),
+        });
       }
 
       if (data.voiceSettings) {
         const nextVoiceSettings = { ...voiceSettings, ...data.voiceSettings };
         setVoiceSettings(nextVoiceSettings);
         saveVoiceSettings(nextVoiceSettings);
+        void fetch("/api/settings/runtime", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ voiceSettings: nextVoiceSettings }),
+        });
       }
 
       setProfileStatus("Imported profile and applied settings.");
