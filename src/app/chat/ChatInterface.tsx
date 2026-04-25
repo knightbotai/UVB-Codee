@@ -11,9 +11,12 @@ import {
   ArrowPathIcon,
   DocumentDuplicateIcon,
   BookmarkIcon,
-  ChevronDownIcon,
   PhotoIcon,
   FilmIcon,
+  PlayIcon,
+  PauseIcon,
+  SpeakerXMarkIcon,
+  ArrowUturnLeftIcon,
 } from "@heroicons/react/24/outline";
 import { Bot, User, Sparkles } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
@@ -141,12 +144,14 @@ async function fetchChatConfig(settings: ModelSettings): Promise<ChatConfig | nu
 
 async function sendChatToModel(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
-  settings: ModelSettings
+  settings: ModelSettings,
+  signal?: AbortSignal
 ) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ messages, settings }),
+    signal,
   });
   const data = (await response.json()) as { content?: string; error?: string };
 
@@ -158,7 +163,16 @@ async function sendChatToModel(
 }
 
 export default function ChatInterface() {
-  const { threads, activeThreadId, addThread, addMessage, setActiveThread, isRecording, setIsRecording } =
+  const {
+    threads,
+    activeThreadId,
+    addThread,
+    addMessage,
+    updateMessage,
+    setActiveThread,
+    isRecording,
+    setIsRecording,
+  } =
     useAppStore();
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -168,12 +182,22 @@ export default function ChatInterface() {
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
   const [activityStatus, setActivityStatus] = useState("Ready for text, voice, and media.");
   const [lastFailedInput, setLastFailedInput] = useState<string | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isSpeechPaused, setIsSpeechPaused] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [voiceLevels, setVoiceLevels] = useState<number[]>(Array(32).fill(0.05));
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const voiceFrameRef = useRef<number | null>(null);
+  const discardRecordingRef = useRef(false);
+  const recordingActionRef = useRef<"edit" | "send">("edit");
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatAbortRef = useRef<AbortController | null>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
@@ -225,6 +249,93 @@ export default function ChatInterface() {
     setActiveThread(thread.id);
   };
 
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setActivityStatus("Copied to clipboard.");
+    } catch {
+      setActivityStatus("Copy failed. Browser clipboard permission may be blocked.");
+    }
+  };
+
+  const branchFromMessage = (messageId: string) => {
+    if (!activeThread) return;
+
+    const messageIndex = activeThread.messages.findIndex((message) => message.id === messageId);
+    if (messageIndex < 0) return;
+
+    const branchedMessages = activeThread.messages.slice(0, messageIndex + 1).map((message) => ({
+      ...message,
+      id: generateId(),
+    }));
+    const thread = {
+      id: generateId(),
+      title: `${activeThread.title || "Conversation"} branch`,
+      messages: branchedMessages,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      context: `Branched from ${activeThread.id}`,
+    };
+
+    addThread(thread);
+    setActiveThread(thread.id);
+    setActivityStatus("Created a new branch from that message.");
+  };
+
+  const regenerateFromMessage = async (messageId: string) => {
+    if (!activeThread || isTyping) return;
+
+    const messageIndex = activeThread.messages.findIndex((message) => message.id === messageId);
+    if (messageIndex < 0) return;
+
+    const previousUserMessage = [...activeThread.messages.slice(0, messageIndex)]
+      .reverse()
+      .find((message) => message.role === "user");
+
+    if (!previousUserMessage) {
+      setActivityStatus("No user prompt found to regenerate from.");
+      return;
+    }
+
+    await sendMessageWithText(previousUserMessage.content, previousUserMessage.type);
+  };
+
+  const toggleBookmark = (message: ChatMessage) => {
+    if (!activeThreadId) return;
+    updateMessage(activeThreadId, message.id, { bookmarked: !message.bookmarked });
+    setActivityStatus(message.bookmarked ? "Removed bookmark." : "Bookmarked message.");
+  };
+
+  const stopChatGeneration = () => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setIsTyping(false);
+    setActivityStatus("Stopped model response.");
+  };
+
+  const pauseSpeech = () => {
+    audioPlayerRef.current?.pause();
+    setIsSpeechPaused(true);
+    setActivityStatus("Speech paused.");
+  };
+
+  const resumeSpeech = async () => {
+    if (!audioPlayerRef.current) return;
+    await audioPlayerRef.current.play();
+    setIsSpeaking(true);
+    setIsSpeechPaused(false);
+    setActivityStatus("Speech resumed.");
+  };
+
+  const stopSpeech = () => {
+    if (!audioPlayerRef.current) return;
+    audioPlayerRef.current.pause();
+    audioPlayerRef.current.currentTime = 0;
+    setIsSpeaking(false);
+    setIsSpeechPaused(false);
+    setActivityStatus("Speech stopped.");
+  };
+
   const speakText = async (text: string) => {
     if (!voiceSettings.autoSpeak || !text.trim()) return;
 
@@ -254,7 +365,20 @@ export default function ChatInterface() {
     audioPlayerRef.current.pause();
     audioPlayerRef.current.src = audioUrl;
     audioPlayerRef.current.volume = voiceSettings.volume;
-    audioPlayerRef.current.onended = () => URL.revokeObjectURL(audioUrl);
+    audioPlayerRef.current.onplay = () => {
+      setIsSpeaking(true);
+      setIsSpeechPaused(false);
+    };
+    audioPlayerRef.current.onpause = () => {
+      setIsSpeaking(false);
+      setIsSpeechPaused(audioPlayerRef.current?.currentTime ? true : false);
+    };
+    audioPlayerRef.current.onended = () => {
+      URL.revokeObjectURL(audioUrl);
+      setIsSpeaking(false);
+      setIsSpeechPaused(false);
+      setActivityStatus("Ready.");
+    };
     await audioPlayerRef.current.play();
   };
 
@@ -288,6 +412,9 @@ export default function ChatInterface() {
     setIsTyping(true);
     setLastFailedInput(null);
     setActivityStatus("Thinking through the local model...");
+    chatAbortRef.current?.abort();
+    const abortController = new AbortController();
+    chatAbortRef.current = abortController;
 
     const currentThread = useAppStore.getState().threads.find((thread) => thread.id === threadId);
     const priorMessages: Array<{ role: "user" | "assistant"; content: string }> =
@@ -303,7 +430,7 @@ export default function ChatInterface() {
       const response = await sendChatToModel([
         ...priorMessages,
         { role: "user", content: userInput },
-      ], modelSettings);
+      ], modelSettings, abortController.signal);
       const aiMsg: ChatMessage = {
         id: generateId(),
         role: "assistant",
@@ -318,6 +445,10 @@ export default function ChatInterface() {
       });
       setActivityStatus("Ready.");
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setActivityStatus("Stopped model response.");
+        return;
+      }
       const message = error instanceof Error ? error.message : "Unknown local model error.";
       addMessage(threadId!, {
         id: generateId(),
@@ -329,6 +460,9 @@ export default function ChatInterface() {
       setLastFailedInput(userInput);
       setActivityStatus("Model failed. Settings or service health need attention.");
     } finally {
+      if (chatAbortRef.current === abortController) {
+        chatAbortRef.current = null;
+      }
       setIsTyping(false);
     }
   };
@@ -356,8 +490,69 @@ export default function ChatInterface() {
     return data.text;
   };
 
-  const stopRecording = () => {
+  const stopVoiceLevelMonitor = async () => {
+    if (voiceFrameRef.current) {
+      cancelAnimationFrame(voiceFrameRef.current);
+      voiceFrameRef.current = null;
+    }
+    analyserRef.current = null;
+
+    if (audioContextRef.current) {
+      await audioContextRef.current.close().catch(() => undefined);
+      audioContextRef.current = null;
+    }
+
+    setVoiceLevels(Array(32).fill(0.05));
+  };
+
+  const startVoiceLevelMonitor = (stream: MediaStream) => {
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    const audioContext = new AudioContextClass();
+    const analyser = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(stream);
+    analyser.fftSize = 256;
+    source.connect(analyser);
+
+    audioContextRef.current = audioContext;
+    analyserRef.current = analyser;
+
+    const buffer = new Uint8Array(analyser.frequencyBinCount);
+
+    const tick = () => {
+      analyser.getByteFrequencyData(buffer);
+      const bucketSize = Math.max(1, Math.floor(buffer.length / 32));
+      const nextLevels = Array.from({ length: 32 }, (_, index) => {
+        const start = index * bucketSize;
+        const slice = buffer.slice(start, start + bucketSize);
+        const average = slice.reduce((sum, value) => sum + value, 0) / Math.max(1, slice.length);
+        return Math.max(0.04, Math.min(1, average / 180));
+      });
+      setVoiceLevels(nextLevels);
+      voiceFrameRef.current = requestAnimationFrame(tick);
+    };
+
+    tick();
+  };
+
+  const stopRecording = (action: "edit" | "send" = "edit") => {
+    recordingActionRef.current = action;
     mediaRecorderRef.current?.stop();
+  };
+
+  const cancelRecording = async () => {
+    discardRecordingRef.current = true;
+    audioChunksRef.current = [];
+    mediaRecorderRef.current?.stop();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setIsRecording(false);
+    setIsTranscribing(false);
+    await stopVoiceLevelMonitor();
+    setActivityStatus("Recording cancelled.");
   };
 
   const startRecording = async () => {
@@ -371,6 +566,7 @@ export default function ChatInterface() {
 
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
+      startVoiceLevelMonitor(stream);
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -382,20 +578,42 @@ export default function ChatInterface() {
         setIsRecording(false);
         streamRef.current?.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
+        await stopVoiceLevelMonitor();
+
+        if (discardRecordingRef.current || !audioChunksRef.current.length) {
+          discardRecordingRef.current = false;
+          audioChunksRef.current = [];
+          setActivityStatus("Recording cancelled.");
+          return;
+        }
+
+        setIsTranscribing(true);
         setActivityStatus("Transcribing with local Whisper...");
 
         try {
           const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
           const transcript = await transcribeAudio(audioBlob);
-          setInput(transcript);
-          setActivityStatus("Transcript ready. Sending to KnightBot...");
-          await sendMessageWithText(transcript, "voice");
+          if (recordingActionRef.current === "send") {
+            setInput("");
+            setInputMode("text");
+            setActivityStatus("Transcript ready. Sending to KnightBot...");
+            await sendMessageWithText(transcript, "voice");
+          } else {
+            setInput(transcript);
+            setInputMode("text");
+            setActivityStatus("Transcript ready. Review or edit it, then press send.");
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : "Voice transcription failed.";
           setActivityStatus(`STT error: ${message}`);
+        } finally {
+          audioChunksRef.current = [];
+          setIsTranscribing(false);
         }
       };
 
+      discardRecordingRef.current = false;
+      recordingActionRef.current = "edit";
       recorder.start();
       setIsRecording(true);
       setActivityStatus("Recording voice...");
@@ -448,6 +666,7 @@ export default function ChatInterface() {
           <div className="p-3">
             <button
               onClick={createNewThread}
+              title="Start a new conversation"
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg btn-primary text-sm"
             >
               <PlusIcon className="w-4 h-4" />
@@ -519,10 +738,51 @@ export default function ChatInterface() {
               {lastFailedInput && (
                 <button
                   onClick={() => sendMessageWithText(lastFailedInput, "text")}
+                  title="Retry the last failed prompt"
                   className="rounded-full border border-uvb-accent-yellow/40 px-2 py-0.5 text-uvb-accent-yellow hover:bg-uvb-accent-yellow/10"
                 >
                   Retry last
                 </button>
+              )}
+              {isTyping && (
+                <button
+                  onClick={stopChatGeneration}
+                  title="Stop the current model response"
+                  className="rounded-full border border-red-400/40 px-2 py-0.5 text-red-300 hover:bg-red-500/10"
+                >
+                  Stop response
+                </button>
+              )}
+              {(isSpeaking || isSpeechPaused) && (
+                <div className="flex items-center gap-1 rounded-full border border-uvb-steel-blue/40 px-1.5 py-0.5">
+                  {isSpeechPaused ? (
+                    <button
+                      onClick={resumeSpeech}
+                      title="Resume spoken reply"
+                      aria-label="Resume spoken reply"
+                      className="rounded-full p-0.5 text-uvb-neon-green hover:bg-uvb-light-gray/40"
+                    >
+                      <PlayIcon className="h-3 w-3" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={pauseSpeech}
+                      title="Pause spoken reply"
+                      aria-label="Pause spoken reply"
+                      className="rounded-full p-0.5 text-uvb-text-secondary hover:bg-uvb-light-gray/40"
+                    >
+                      <PauseIcon className="h-3 w-3" />
+                    </button>
+                  )}
+                  <button
+                    onClick={stopSpeech}
+                    title="Stop spoken reply"
+                    aria-label="Stop spoken reply"
+                    className="rounded-full p-0.5 text-red-300 hover:bg-red-500/10"
+                  >
+                    <SpeakerXMarkIcon className="h-3 w-3" />
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -561,6 +821,7 @@ export default function ChatInterface() {
                       key={feat.label}
                       className="text-left p-3 rounded-lg bg-uvb-dark-gray/50 border border-uvb-border/30 hover:border-uvb-neon-green/20 transition-all"
                       onClick={() => setInput(`Tell me about ${feat.label.toLowerCase()}`)}
+                      title={`Ask about ${feat.label.toLowerCase()}`}
                     >
                       <span className="text-lg">{feat.icon}</span>
                       <p className="text-sm font-medium text-uvb-text-primary mt-1">
@@ -604,13 +865,40 @@ export default function ChatInterface() {
                         </span>
                         {msg.role === "assistant" && (
                           <div className="flex gap-1">
-                            <button className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors">
+                            <button
+                              onClick={() => copyText(msg.content)}
+                              title="Copy response"
+                              aria-label="Copy response"
+                              className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                            >
                               <DocumentDuplicateIcon className="w-3 h-3" />
                             </button>
-                            <button className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors">
+                            <button
+                              onClick={() => regenerateFromMessage(msg.id)}
+                              title="Regenerate from the previous prompt"
+                              aria-label="Regenerate from the previous prompt"
+                              className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                            >
                               <ArrowPathIcon className="w-3 h-3" />
                             </button>
-                            <button className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors">
+                            <button
+                              onClick={() => branchFromMessage(msg.id)}
+                              title="Branch conversation from here"
+                              aria-label="Branch conversation from here"
+                              className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                            >
+                              <ArrowUturnLeftIcon className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => toggleBookmark(msg)}
+                              title={msg.bookmarked ? "Remove bookmark" : "Bookmark response"}
+                              aria-label={msg.bookmarked ? "Remove bookmark" : "Bookmark response"}
+                              className={`p-0.5 rounded hover:bg-uvb-light-gray/40 transition-colors ${
+                                msg.bookmarked
+                                  ? "text-uvb-accent-yellow"
+                                  : "text-uvb-text-muted hover:text-uvb-text-secondary"
+                              }`}
+                            >
                               <BookmarkIcon className="w-3 h-3" />
                             </button>
                           </div>
@@ -660,25 +948,51 @@ export default function ChatInterface() {
 
           {/* Input area */}
           <div className="p-4 border-t border-uvb-border/40">
-            {isRecording && (
+            {(isRecording || isTranscribing) && (
               <div className="mb-3 flex items-center gap-3 p-3 rounded-lg bg-uvb-deep-teal/20 border border-uvb-neon-green/20">
                 <div className="w-3 h-3 rounded-full bg-red-500 status-pulse" />
                 <span className="text-sm text-uvb-text-secondary">
-                  Recording...
+                  {isTranscribing ? "Transcribing..." : "Recording..."}
                 </span>
-                <VoiceVisualizer isActive={true} />
-                <button
-                  onClick={stopRecording}
-                  className="ml-auto p-1.5 rounded-lg hover:bg-uvb-light-gray/40 text-uvb-text-secondary"
-                >
-                  <StopIcon className="w-4 h-4" />
-                </button>
+                <VoiceVisualizer isActive={isRecording} levels={voiceLevels} />
+                <div className="ml-auto flex items-center gap-2">
+                  {isRecording && (
+                    <>
+                      <button
+                        onClick={() => stopRecording("send")}
+                        title="Stop recording, transcribe, and send immediately"
+                        aria-label="Stop recording, transcribe, and send immediately"
+                        className="rounded-lg border border-uvb-neon-green/30 bg-uvb-neon-green/10 px-3 py-1.5 text-xs text-uvb-neon-green hover:bg-uvb-neon-green/20"
+                      >
+                        Send now
+                      </button>
+                      <button
+                        onClick={() => stopRecording("edit")}
+                        title="Stop recording and place transcript in the input for editing"
+                        aria-label="Stop recording and place transcript in the input for editing"
+                        className="rounded-lg border border-uvb-neon-green/30 px-3 py-1.5 text-xs text-uvb-neon-green hover:bg-uvb-neon-green/10"
+                      >
+                        Stop & edit
+                      </button>
+                      <button
+                        onClick={cancelRecording}
+                        title="Cancel recording without sending"
+                        aria-label="Cancel recording without sending"
+                        className="rounded-lg border border-red-400/30 px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/10"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
             <div className="flex items-end gap-3">
               <div className="flex gap-1">
                 <button
                   onClick={() => setInputMode("text")}
+                  title="Text input mode"
+                  aria-label="Text input mode"
                   className={`p-2 rounded-lg transition-colors ${
                     inputMode === "text"
                       ? "bg-uvb-deep-teal/30 text-uvb-neon-green"
@@ -694,6 +1008,7 @@ export default function ChatInterface() {
                       ? "bg-uvb-deep-teal/30 text-uvb-neon-green"
                       : "text-uvb-text-muted hover:text-uvb-text-secondary"
                   }`}
+                  title={isRecording ? "Stop recording and edit transcript" : "Record voice message"}
                   aria-label={isRecording ? "Stop recording" : "Record voice"}
                 >
                   {isRecording ? <StopIcon className="w-4 h-4" /> : <MicrophoneIcon className="w-4 h-4" />}
@@ -712,6 +1027,7 @@ export default function ChatInterface() {
                   <button
                     onClick={() => openAttachmentPicker("image/*")}
                     className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                    title="Attach an image"
                     aria-label="Attach image"
                   >
                     <PhotoIcon className="w-4 h-4" />
@@ -719,6 +1035,7 @@ export default function ChatInterface() {
                   <button
                     onClick={() => openAttachmentPicker("video/*,audio/*,.pdf,.txt,.md,.json,.csv")}
                     className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                    title="Attach media or file"
                     aria-label="Attach media or file"
                   >
                     <FilmIcon className="w-4 h-4" />
@@ -738,6 +1055,8 @@ export default function ChatInterface() {
               <button
                 onClick={sendMessage}
                 disabled={!input.trim() && !isRecording}
+                title={isTyping ? "KnightBot is responding" : "Send message"}
+                aria-label="Send message"
                 className="p-3 rounded-lg btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <PaperAirplaneIcon className="w-4 h-4" />

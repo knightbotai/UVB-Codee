@@ -8,6 +8,7 @@ export interface ChatMessage {
   timestamp: number;
   type: "text" | "voice" | "image" | "video";
   branch?: string;
+  bookmarked?: boolean;
 }
 
 export interface ChatThread {
@@ -49,6 +50,7 @@ interface AppState {
   addThread: (thread: ChatThread) => void;
   setActiveThread: (id: string | null) => void;
   addMessage: (threadId: string, message: ChatMessage) => void;
+  updateMessage: (threadId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   setIsRecording: (recording: boolean) => void;
 
   // Voice
@@ -95,6 +97,20 @@ export const useAppStore = create<AppState>()(
               ? {
                   ...t,
                   messages: [...t.messages, message],
+                  updatedAt: Date.now(),
+                }
+              : t
+          ),
+        })),
+      updateMessage: (threadId, messageId, updates) =>
+        set((state) => ({
+          threads: state.threads.map((t) =>
+            t.id === threadId
+              ? {
+                  ...t,
+                  messages: t.messages.map((message) =>
+                    message.id === messageId ? { ...message, ...updates } : message
+                  ),
                   updatedAt: Date.now(),
                 }
               : t
