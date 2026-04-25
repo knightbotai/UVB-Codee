@@ -2,12 +2,22 @@ import { NextResponse } from "next/server";
 
 const LLM_BASE_URL = process.env.UVB_LLM_BASE_URL ?? "http://127.0.0.1:8003/v1";
 const LLM_MODEL = process.env.UVB_LLM_MODEL ?? "qwen36-35b-a3b-heretic-nvfp4";
+const LLM_API_KEY = process.env.UVB_LLM_API_KEY ?? "uvb-local";
 
-export async function GET() {
+function normalizeBaseUrl(baseUrl: string) {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const baseUrl = normalizeBaseUrl(url.searchParams.get("baseUrl") || LLM_BASE_URL);
+  const model = url.searchParams.get("model") || LLM_MODEL;
+  const apiKey = url.searchParams.get("apiKey") || LLM_API_KEY;
+
   try {
-    const response = await fetch(`${LLM_BASE_URL}/models`, {
+    const response = await fetch(`${baseUrl}/models`, {
       headers: {
-        Authorization: `Bearer ${process.env.UVB_LLM_API_KEY ?? "uvb-local"}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       signal: AbortSignal.timeout(3000),
     });
@@ -16,8 +26,8 @@ export async function GET() {
       return NextResponse.json({
         llmConfigured: true,
         connected: false,
-        baseUrl: LLM_BASE_URL,
-        model: LLM_MODEL,
+        baseUrl,
+        model,
         error: `Model server returned ${response.status}.`,
       });
     }
@@ -25,8 +35,8 @@ export async function GET() {
     return NextResponse.json({
       llmConfigured: true,
       connected: true,
-      baseUrl: LLM_BASE_URL,
-      model: LLM_MODEL,
+      baseUrl,
+      model,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown model status error.";
@@ -34,8 +44,8 @@ export async function GET() {
     return NextResponse.json({
       llmConfigured: true,
       connected: false,
-      baseUrl: LLM_BASE_URL,
-      model: LLM_MODEL,
+      baseUrl,
+      model,
       error: message,
     });
   }

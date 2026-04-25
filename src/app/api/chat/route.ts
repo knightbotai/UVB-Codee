@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const LLM_BASE_URL = process.env.UVB_LLM_BASE_URL ?? "http://127.0.0.1:8003/v1";
 const LLM_MODEL = process.env.UVB_LLM_MODEL ?? "qwen36-35b-a3b-heretic-nvfp4";
+const LLM_API_KEY = process.env.UVB_LLM_API_KEY ?? "uvb-local";
 
 type ChatRole = "system" | "user" | "assistant";
 
@@ -12,6 +13,14 @@ interface ChatMessage {
 
 interface ChatRequestBody {
   messages?: ChatMessage[];
+  settings?: {
+    baseUrl?: string;
+    model?: string;
+    apiKey?: string;
+    temperature?: number;
+    maxTokens?: number;
+    enableThinking?: boolean;
+  };
 }
 
 interface OpenAIChatResponse {
@@ -28,6 +37,10 @@ interface OpenAIChatResponse {
 const SYSTEM_PROMPT =
   "You are KnightBot inside UVB, a local multimodal AI workspace. Be direct, useful, warm, and concise. You are currently connected through the UVB web interface.";
 
+function normalizeBaseUrl(baseUrl: string) {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
 export async function POST(request: NextRequest) {
   let body: ChatRequestBody;
 
@@ -38,6 +51,17 @@ export async function POST(request: NextRequest) {
   }
 
   const userMessages = Array.isArray(body.messages) ? body.messages : [];
+  const baseUrl = normalizeBaseUrl(body.settings?.baseUrl || LLM_BASE_URL);
+  const model = body.settings?.model?.trim() || LLM_MODEL;
+  const apiKey = body.settings?.apiKey?.trim() || LLM_API_KEY;
+  const temperature = Number.isFinite(body.settings?.temperature)
+    ? Number(body.settings?.temperature)
+    : 0.7;
+  const maxTokens = Number.isFinite(body.settings?.maxTokens)
+    ? Number(body.settings?.maxTokens)
+    : 1200;
+  const enableThinking = body.settings?.enableThinking ?? false;
+
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     ...userMessages
@@ -55,20 +79,20 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.UVB_LLM_API_KEY ?? "uvb-local"}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: LLM_MODEL,
+        model,
         messages,
-        temperature: 0.7,
-        max_tokens: 1200,
+        temperature,
+        max_tokens: maxTokens,
         stream: false,
         chat_template_kwargs: {
-          enable_thinking: false,
+          enable_thinking: enableThinking,
         },
       }),
     });
@@ -100,12 +124,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       content,
-      model: LLM_MODEL,
+      model,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown model bridge error.";
     return NextResponse.json(
-      { error: `Could not reach local model at ${LLM_BASE_URL}: ${message}` },
+      { error: `Could not reach model at ${baseUrl}: ${message}` },
       { status: 502 }
     );
   }

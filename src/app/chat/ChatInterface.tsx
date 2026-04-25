@@ -17,6 +17,11 @@ import {
 } from "@heroicons/react/24/outline";
 import { Bot, User, Sparkles } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
+import {
+  loadModelSettings,
+  MODEL_SETTINGS_UPDATED_EVENT,
+  type ModelSettings,
+} from "@/lib/modelSettings";
 
 function generateId() {
   return Math.random().toString(36).substring(2, 11);
@@ -97,9 +102,14 @@ interface ChatConfig {
   error?: string;
 }
 
-async function fetchChatConfig(): Promise<ChatConfig | null> {
+async function fetchChatConfig(settings: ModelSettings): Promise<ChatConfig | null> {
   try {
-    const response = await fetch("/api/chat/config");
+    const params = new URLSearchParams({
+      baseUrl: settings.baseUrl,
+      model: settings.model,
+      apiKey: settings.apiKey,
+    });
+    const response = await fetch(`/api/chat/config?${params.toString()}`);
     if (!response.ok) return null;
     return (await response.json()) as ChatConfig;
   } catch {
@@ -107,11 +117,14 @@ async function fetchChatConfig(): Promise<ChatConfig | null> {
   }
 }
 
-async function sendChatToModel(messages: Array<{ role: "user" | "assistant"; content: string }>) {
+async function sendChatToModel(
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  settings: ModelSettings
+) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ messages, settings }),
   });
   const data = (await response.json()) as { content?: string; error?: string };
 
@@ -128,13 +141,27 @@ export default function ChatInterface() {
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [inputMode, setInputMode] = useState<"text" | "voice">("text");
+  const [modelSettings, setModelSettings] = useState<ModelSettings>(() => loadModelSettings());
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
   useEffect(() => {
-    fetchChatConfig().then(setChatConfig);
+    const refreshConfig = () => {
+      const settings = loadModelSettings();
+      setModelSettings(settings);
+      fetchChatConfig(settings).then(setChatConfig);
+    };
+
+    refreshConfig();
+    window.addEventListener(MODEL_SETTINGS_UPDATED_EVENT, refreshConfig);
+    window.addEventListener("storage", refreshConfig);
+
+    return () => {
+      window.removeEventListener(MODEL_SETTINGS_UPDATED_EVENT, refreshConfig);
+      window.removeEventListener("storage", refreshConfig);
+    };
   }, []);
 
   useEffect(() => {
@@ -196,7 +223,7 @@ export default function ChatInterface() {
       const response = await sendChatToModel([
         ...priorMessages,
         { role: "user", content: userInput },
-      ]);
+      ], modelSettings);
       const aiMsg: ChatMessage = {
         id: generateId(),
         role: "assistant",

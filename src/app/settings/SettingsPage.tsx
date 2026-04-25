@@ -12,9 +12,51 @@ import {
   KeyIcon,
 } from "@heroicons/react/24/outline";
 import { Shield, Palette, Brain } from "lucide-react";
+import {
+  DEFAULT_MODEL_SETTINGS,
+  loadModelSettings,
+  saveModelSettings,
+  type ModelSettings,
+} from "@/lib/modelSettings";
+
+const MODEL_PRESETS = [
+  {
+    label: "Local vLLM 8003",
+    provider: "Local vLLM",
+    baseUrl: "http://127.0.0.1:8003/v1",
+    model: "qwen36-35b-a3b-heretic-nvfp4",
+    apiKey: "uvb-local",
+  },
+  {
+    label: "LM Studio",
+    provider: "LM Studio",
+    baseUrl: "http://127.0.0.1:1234/v1",
+    model: "local-model",
+    apiKey: "lm-studio",
+  },
+  {
+    label: "Ollama OpenAI",
+    provider: "Ollama",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "llama3.1",
+    apiKey: "ollama",
+  },
+  {
+    label: "Custom OpenAI-compatible",
+    provider: "Custom",
+    baseUrl: "",
+    model: "",
+    apiKey: "",
+  },
+];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
+  const [modelSettings, setModelSettings] = useState<ModelSettings>(() => loadModelSettings());
+  const [modelStatus, setModelStatus] = useState<{
+    state: "idle" | "testing" | "connected" | "error" | "saved";
+    message: string;
+  }>({ state: "idle", message: "" });
 
   const tabs = [
     { id: "profile", label: "Profile", icon: UserCircleIcon },
@@ -24,6 +66,52 @@ export default function SettingsPage() {
     { id: "ai", label: "AI Settings", icon: Brain },
     { id: "notifications", label: "Notifications", icon: BellIcon },
   ];
+
+  const updateModelSettings = (updates: Partial<ModelSettings>) => {
+    setModelSettings((current) => ({ ...current, ...updates }));
+    setModelStatus({ state: "idle", message: "" });
+  };
+
+  const testModelConnection = async (settings = modelSettings) => {
+    setModelStatus({ state: "testing", message: "Testing connection..." });
+
+    try {
+      const params = new URLSearchParams({
+        baseUrl: settings.baseUrl,
+        model: settings.model,
+        apiKey: settings.apiKey,
+      });
+      const response = await fetch(`/api/chat/config?${params.toString()}`);
+      const data = (await response.json()) as {
+        connected?: boolean;
+        error?: string;
+        model?: string;
+      };
+
+      if (!response.ok || !data.connected) {
+        setModelStatus({
+          state: "error",
+          message: data.error ?? "Could not connect to the selected model endpoint.",
+        });
+        return false;
+      }
+
+      setModelStatus({
+        state: "connected",
+        message: `Connected to ${data.model ?? settings.model}`,
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown connection error.";
+      setModelStatus({ state: "error", message });
+      return false;
+    }
+  };
+
+  const saveCurrentModelSettings = () => {
+    saveModelSettings(modelSettings);
+    setModelStatus({ state: "saved", message: "Saved. Chat will use this model now." });
+  };
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -316,22 +404,70 @@ export default function SettingsPage() {
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
                         Model Backend
                       </label>
-                      <select className="input-field">
-                        <option>LM Studio (Local GGUF)</option>
-                        <option>Ollama</option>
-                        <option>OpenAI API</option>
+                      <select
+                        className="input-field"
+                        value={modelSettings.provider}
+                        onChange={(event) => {
+                          const preset = MODEL_PRESETS.find(
+                            (item) => item.provider === event.target.value
+                          );
+                          if (!preset) return;
+                          updateModelSettings({
+                            provider: preset.provider,
+                            baseUrl: preset.baseUrl || modelSettings.baseUrl,
+                            model: preset.model || modelSettings.model,
+                            apiKey: preset.apiKey || modelSettings.apiKey,
+                          });
+                        }}
+                      >
+                        {MODEL_PRESETS.map((preset) => (
+                          <option key={preset.provider} value={preset.provider}>
+                            {preset.label}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div>
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
-                        Context Window
+                        Base URL
                       </label>
-                      <select className="input-field">
-                        <option>8192 tokens</option>
-                        <option>16384 tokens</option>
-                        <option>32768 tokens</option>
-                        <option>65536 tokens</option>
-                      </select>
+                      <input
+                        type="url"
+                        value={modelSettings.baseUrl}
+                        onChange={(event) =>
+                          updateModelSettings({ baseUrl: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="http://127.0.0.1:8003/v1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-uvb-text-muted block mb-1.5">
+                        Model Name
+                      </label>
+                      <input
+                        type="text"
+                        value={modelSettings.model}
+                        onChange={(event) =>
+                          updateModelSettings({ model: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="qwen36-35b-a3b-heretic-nvfp4"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-uvb-text-muted block mb-1.5">
+                        API Key
+                      </label>
+                      <input
+                        type="password"
+                        value={modelSettings.apiKey}
+                        onChange={(event) =>
+                          updateModelSettings({ apiKey: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="Required by OpenAI-compatible servers"
+                      />
                     </div>
                     <div>
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
@@ -342,27 +478,86 @@ export default function SettingsPage() {
                         min="0"
                         max="2"
                         step="0.1"
-                        defaultValue="0.7"
+                        value={modelSettings.temperature}
+                        onChange={(event) =>
+                          updateModelSettings({ temperature: Number(event.target.value) })
+                        }
                         className="w-full accent-uvb-neon-green"
                       />
                       <div className="flex justify-between text-[10px] text-uvb-text-muted">
                         <span>Focused</span>
-                        <span>0.7</span>
+                        <span>{modelSettings.temperature.toFixed(1)}</span>
                         <span>Creative</span>
                       </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-uvb-text-muted block mb-1.5">
+                        Max Response Tokens
+                      </label>
+                      <input
+                        type="number"
+                        min="64"
+                        max="8192"
+                        step="64"
+                        value={modelSettings.maxTokens}
+                        onChange={(event) =>
+                          updateModelSettings({ maxTokens: Number(event.target.value) })
+                        }
+                        className="input-field"
+                      />
                     </div>
                     <div className="flex items-center justify-between p-3 rounded-lg bg-uvb-dark-gray/40">
                       <div>
                         <p className="text-sm text-uvb-text-primary">
-                          Chain-of-Thought
+                          Qwen Thinking Mode
                         </p>
                         <p className="text-xs text-uvb-text-muted">
-                          Enable step-by-step reasoning
+                          Leave off for chat-style responses from thinking models
                         </p>
                       </div>
-                      <button className="w-11 h-6 rounded-full bg-uvb-neon-green/30 relative">
-                        <span className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-uvb-neon-green shadow" />
+                      <button
+                        onClick={() =>
+                          updateModelSettings({
+                            enableThinking: !modelSettings.enableThinking,
+                          })
+                        }
+                        className={`w-11 h-6 rounded-full relative ${
+                          modelSettings.enableThinking
+                            ? "bg-uvb-neon-green/30"
+                            : "bg-uvb-light-gray"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-0.5 w-5 h-5 rounded-full shadow transition-all ${
+                            modelSettings.enableThinking
+                              ? "right-0.5 bg-uvb-neon-green"
+                              : "left-0.5 bg-uvb-text-muted"
+                          }`}
+                        />
                       </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 pt-2">
+                      <button
+                        onClick={() => testModelConnection()}
+                        className="btn-ghost"
+                        disabled={modelStatus.state === "testing"}
+                      >
+                        Test Connection
+                      </button>
+                      <button onClick={saveCurrentModelSettings} className="btn-primary">
+                        Save Model Settings
+                      </button>
+                      {modelStatus.message && (
+                        <span
+                          className={`text-xs ${
+                            modelStatus.state === "error"
+                              ? "text-red-400"
+                              : "text-uvb-neon-green"
+                          }`}
+                        >
+                          {modelStatus.message}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center justify-between p-3 rounded-lg bg-uvb-dark-gray/40">
                       <div>
