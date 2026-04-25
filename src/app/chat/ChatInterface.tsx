@@ -157,12 +157,13 @@ async function fetchChatConfig(settings: ModelSettings): Promise<ChatConfig | nu
 async function sendChatToModel(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
   settings: ModelSettings,
+  systemPrompt: string,
   signal?: AbortSignal
 ) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, settings }),
+    body: JSON.stringify({ messages, settings, systemPrompt }),
     signal,
   });
   const data = (await response.json()) as { content?: string; error?: string };
@@ -196,6 +197,9 @@ export default function ChatInterface() {
   const [lastFailedInput, setLastFailedInput] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isSpeechPaused, setIsSpeechPaused] = useState(false);
+  const [hasSpeechReady, setHasSpeechReady] = useState(false);
+  const [speechProgress, setSpeechProgress] = useState(0);
+  const [speechDuration, setSpeechDuration] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceLevels, setVoiceLevels] = useState<number[]>(Array(32).fill(0.05));
   const [liveVoiceEnabled, setLiveVoiceEnabled] = useState(false);
@@ -366,7 +370,21 @@ export default function ChatInterface() {
     audioPlayerRef.current.currentTime = 0;
     setIsSpeaking(false);
     setIsSpeechPaused(false);
+    setSpeechProgress(0);
     setActivityStatus("Speech stopped.");
+  };
+
+  const replaySpeech = async () => {
+    if (!audioPlayerRef.current?.src) return;
+    audioPlayerRef.current.currentTime = 0;
+    await audioPlayerRef.current.play();
+    setActivityStatus("Replaying spoken reply.");
+  };
+
+  const seekSpeech = (value: number) => {
+    if (!audioPlayerRef.current) return;
+    audioPlayerRef.current.currentTime = value;
+    setSpeechProgress(value);
   };
 
   const speakText = async (text: string) => {
@@ -401,15 +419,23 @@ export default function ChatInterface() {
     audioPlayerRef.current.onplay = () => {
       setIsSpeaking(true);
       setIsSpeechPaused(false);
+      setHasSpeechReady(true);
     };
     audioPlayerRef.current.onpause = () => {
       setIsSpeaking(false);
       setIsSpeechPaused(audioPlayerRef.current?.currentTime ? true : false);
     };
+    audioPlayerRef.current.ontimeupdate = () => {
+      setSpeechProgress(audioPlayerRef.current?.currentTime ?? 0);
+    };
+    audioPlayerRef.current.onloadedmetadata = () => {
+      setSpeechDuration(audioPlayerRef.current?.duration || 0);
+    };
     audioPlayerRef.current.onended = () => {
       URL.revokeObjectURL(audioUrl);
       setIsSpeaking(false);
       setIsSpeechPaused(false);
+      setSpeechProgress(0);
       setActivityStatus("Ready.");
     };
     await audioPlayerRef.current.play();
@@ -463,7 +489,7 @@ export default function ChatInterface() {
       const response = await sendChatToModel([
         ...priorMessages,
         { role: "user", content: userInput },
-      ], modelSettings, abortController.signal);
+      ], modelSettings, voiceSettings.systemPrompt, abortController.signal);
       const aiMsg: ChatMessage = {
         id: generateId(),
         role: "assistant",
@@ -701,11 +727,23 @@ export default function ChatInterface() {
     audioPlayerRef.current.onplay = () => {
       setIsSpeaking(true);
       setIsSpeechPaused(false);
+      setHasSpeechReady(true);
+    };
+    audioPlayerRef.current.onpause = () => {
+      setIsSpeaking(false);
+      setIsSpeechPaused(audioPlayerRef.current?.currentTime ? true : false);
+    };
+    audioPlayerRef.current.ontimeupdate = () => {
+      setSpeechProgress(audioPlayerRef.current?.currentTime ?? 0);
+    };
+    audioPlayerRef.current.onloadedmetadata = () => {
+      setSpeechDuration(audioPlayerRef.current?.duration || 0);
     };
     audioPlayerRef.current.onended = () => {
       URL.revokeObjectURL(audioUrl);
       setIsSpeaking(false);
       setIsSpeechPaused(false);
+      setSpeechProgress(0);
       setActivityStatus("Live voice ready.");
     };
     await audioPlayerRef.current.play();
@@ -1050,7 +1088,7 @@ export default function ChatInterface() {
                   Stop response
                 </button>
               )}
-              {(isSpeaking || isSpeechPaused) && (
+              {hasSpeechReady && (
                 <div className="flex items-center gap-1 rounded-full border border-uvb-steel-blue/40 px-1.5 py-0.5">
                   {isSpeechPaused ? (
                     <button
@@ -1071,6 +1109,25 @@ export default function ChatInterface() {
                       <PauseIcon className="h-3 w-3" />
                     </button>
                   )}
+                  <button
+                    onClick={replaySpeech}
+                    title="Replay spoken reply from the beginning"
+                    aria-label="Replay spoken reply"
+                    className="rounded-full p-0.5 text-uvb-accent-yellow hover:bg-uvb-light-gray/40"
+                  >
+                    <ArrowPathIcon className="h-3 w-3" />
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max={speechDuration || 1}
+                    step="0.1"
+                    value={Math.min(speechProgress, speechDuration || 1)}
+                    onChange={(event) => seekSpeech(Number(event.target.value))}
+                    title="Seek spoken reply"
+                    aria-label="Seek spoken reply"
+                    className="w-24 accent-uvb-neon-green"
+                  />
                   <button
                     onClick={stopSpeech}
                     title="Stop spoken reply"

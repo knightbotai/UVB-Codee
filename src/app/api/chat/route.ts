@@ -14,6 +14,7 @@ interface ChatMessage {
 
 interface ChatRequestBody {
   messages?: ChatMessage[];
+  systemPrompt?: string;
   settings?: {
     baseUrl?: string;
     model?: string;
@@ -35,7 +36,7 @@ interface OpenAIChatResponse {
   };
 }
 
-const SYSTEM_PROMPT =
+const DEFAULT_SYSTEM_PROMPT =
   "You are KnightBot inside UVB, a local multimodal AI workspace. Be direct, useful, warm, and concise. You are currently connected through the UVB web interface.";
 
 function normalizeBaseUrl(baseUrl: string) {
@@ -54,6 +55,10 @@ export async function POST(request: NextRequest) {
   const userMessages = Array.isArray(body.messages) ? body.messages : [];
   const runtime = await loadRuntimeSettings();
   const settings = body.settings ?? runtime.modelSettings;
+  const systemPrompt =
+    body.systemPrompt?.trim() ||
+    runtime.voiceSettings.systemPrompt?.trim() ||
+    DEFAULT_SYSTEM_PROMPT;
   const baseUrl = normalizeBaseUrl(settings.baseUrl || LLM_BASE_URL);
   const model = settings.model?.trim() || LLM_MODEL;
   const apiKey = settings.apiKey?.trim() || LLM_API_KEY;
@@ -66,7 +71,7 @@ export async function POST(request: NextRequest) {
   const enableThinking = settings.enableThinking ?? false;
 
   const messages: ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
     ...userMessages
       .filter(
         (message) =>
