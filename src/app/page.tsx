@@ -12,7 +12,7 @@ import MediaStudioPage from "@/app/media/MediaStudioPage";
 import PodcastStudioPage from "@/app/podcast/PodcastStudioPage";
 import MemoryBankPage from "@/app/memory/MemoryBankPage";
 import SettingsPage from "@/app/settings/SettingsPage";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 function SectionRenderer({ section }: { section: string }) {
   switch (section) {
@@ -35,8 +35,11 @@ function SectionRenderer({ section }: { section: string }) {
 
 export default function Home() {
   const { activeSection, sidebarOpen } = useAppStore();
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    const mountFrame = window.requestAnimationFrame(() => setMounted(true));
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
@@ -44,8 +47,26 @@ export default function Home() {
       }
     };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(mountFrame);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
+
+  if (!mounted) {
+    return (
+      <div className="galaxy-bg min-h-screen relative overflow-hidden">
+        <div className="relative z-10 flex min-h-screen items-center justify-center">
+          <div className="glass-panel px-6 py-4 text-center">
+            <p className="font-[family-name:var(--font-display)] text-sm text-uvb-text-primary">
+              UVB KnightBot
+            </p>
+            <p className="mt-1 text-xs text-uvb-text-muted">Loading local cockpit...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="galaxy-bg min-h-screen relative overflow-hidden">

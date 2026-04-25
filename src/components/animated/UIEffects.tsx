@@ -20,6 +20,7 @@ export function GlowOrb({
   return (
     <motion.div
       className="absolute rounded-full pointer-events-none"
+      suppressHydrationWarning
       style={{
         width: `${size}px`,
         height: `${size}px`,
@@ -55,6 +56,7 @@ export function ScanLine({ direction = "horizontal", color = "#39ff14" }: ScanLi
   return (
     <motion.div
       className="absolute pointer-events-none"
+      suppressHydrationWarning
       style={{
         [isHorizontal ? "width" : "height"]: "100%",
         [isHorizontal ? "height" : "width"]: "1px",
@@ -88,6 +90,7 @@ export function FloatingDot({
   return (
     <motion.div
       className="absolute w-1 h-1 rounded-full pointer-events-none"
+      suppressHydrationWarning
       style={{
         left: `${x}%`,
         top: `${y}%`,

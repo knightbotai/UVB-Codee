@@ -33,8 +33,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        <meta name="darkreader-lock" />
+      </head>
       <body
         className={`${orbitron.variable} ${inter.variable} ${jetbrainsMono.variable} antialiased bg-uvb-matte-black text-uvb-text-primary`}
+        suppressHydrationWarning
       >
         {children}
       </body>

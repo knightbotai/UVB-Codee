@@ -52,6 +52,7 @@ export default function Sidebar() {
         className={`fixed top-0 left-0 h-full z-40 flex flex-col ${
           sidebarOpen ? "w-64" : "w-16"
         }`}
+        suppressHydrationWarning
         style={{
           background: "rgba(10, 10, 16, 0.9)",
           backdropFilter: "blur(20px)",
