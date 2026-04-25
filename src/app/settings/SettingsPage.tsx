@@ -430,6 +430,139 @@ export default function SettingsPage() {
                         placeholder="Systran/faster-whisper-large-v3"
                       />
                     </div>
+                    <div className="rounded-lg border border-uvb-neon-green/10 bg-uvb-deep-teal/10 p-4">
+                      <div className="mb-4">
+                        <p className="text-sm font-semibold text-uvb-text-primary">
+                          Live Voice Pipeline
+                        </p>
+                        <p className="mt-1 text-xs text-uvb-text-muted">
+                          Pipecat-ready sidecar controls for realtime STT, turn handling,
+                          local model replies, and streaming TTS upgrades.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="col-span-2">
+                          <label className="text-xs text-uvb-text-muted block mb-1.5">
+                            Voice Agent WebSocket
+                          </label>
+                          <input
+                            type="url"
+                            value={voiceSettings.liveVoiceUrl}
+                            onChange={(event) =>
+                              updateVoiceSettings({ liveVoiceUrl: event.target.value })
+                            }
+                            className="input-field"
+                            placeholder="ws://127.0.0.1:8765/live"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-uvb-text-muted block mb-1.5">
+                            Transport
+                          </label>
+                          <select
+                            className="input-field"
+                            value={voiceSettings.liveTransport}
+                            onChange={(event) =>
+                              updateVoiceSettings({
+                                liveTransport: event.target
+                                  .value as VoiceSettings["liveTransport"],
+                              })
+                            }
+                          >
+                            <option value="websocket">WebSocket local first</option>
+                            <option value="webrtc">WebRTC staged</option>
+                            <option value="livekit">LiveKit later</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-uvb-text-muted block mb-1.5">
+                            Turn Detection / VAD
+                          </label>
+                          <select
+                            className="input-field"
+                            value={voiceSettings.liveVadProvider}
+                            onChange={(event) =>
+                              updateVoiceSettings({
+                                liveVadProvider: event.target
+                                  .value as VoiceSettings["liveVadProvider"],
+                              })
+                            }
+                          >
+                            <option value="browser-manual">Manual stop/send baseline</option>
+                            <option value="silero">Silero VAD staged</option>
+                            <option value="ten-vad">TEN VAD / Turn Detection staged</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-uvb-text-muted block mb-1.5">
+                            Realtime STT Provider
+                          </label>
+                          <select
+                            className="input-field"
+                            value={voiceSettings.liveSttProvider}
+                            onChange={(event) =>
+                              updateVoiceSettings({
+                                liveSttProvider: event.target
+                                  .value as VoiceSettings["liveSttProvider"],
+                              })
+                            }
+                          >
+                            <option value="faster-whisper">Faster Whisper fallback</option>
+                            <option value="parakeet-realtime-eou">
+                              Parakeet Realtime EOU staged
+                            </option>
+                            <option value="custom">Custom provider</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-uvb-text-muted block mb-1.5">
+                            Realtime TTS Provider
+                          </label>
+                          <select
+                            className="input-field"
+                            value={voiceSettings.liveTtsProvider}
+                            onChange={(event) =>
+                              updateVoiceSettings({
+                                liveTtsProvider: event.target
+                                  .value as VoiceSettings["liveTtsProvider"],
+                              })
+                            }
+                          >
+                            <option value="kokoro">Kokoro fallback</option>
+                            <option value="chatterbox-turbo">Chatterbox Turbo staged</option>
+                            <option value="vibevoice-realtime">VibeVoice Realtime staged</option>
+                            <option value="custom">Custom provider</option>
+                          </select>
+                        </div>
+                        <div className="col-span-2">
+                          <label className="text-xs text-uvb-text-muted block mb-1.5">
+                            Voice Profile / Clone Target
+                          </label>
+                          <input
+                            type="text"
+                            value={voiceSettings.voiceProfileName}
+                            onChange={(event) =>
+                              updateVoiceSettings({ voiceProfileName: event.target.value })
+                            }
+                            className="input-field"
+                            placeholder="Sophia / KnightBot Default"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="text-xs text-uvb-text-muted block mb-1.5">
+                            AI Voice Identity / System Prompt
+                          </label>
+                          <textarea
+                            value={voiceSettings.systemPrompt}
+                            onChange={(event) =>
+                              updateVoiceSettings({ systemPrompt: event.target.value })
+                            }
+                            className="input-field min-h-28 resize-y"
+                            placeholder="Define how KnightBot should behave in live voice."
+                          />
+                        </div>
+                      </div>
+                    </div>
                     <div className="flex items-center justify-between p-3 rounded-lg bg-uvb-dark-gray/40">
                       <div>
                         <p className="text-sm text-uvb-text-primary">

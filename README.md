@@ -26,6 +26,7 @@ UVB is now wired for the local KnightBot stack:
 - The top-right health badge checks LLM, STT, TTS, Qdrant, and reranker services.
 - Settings can export/import the UVB model and voice profile for quick recovery by another agent.
 - Runtime model/voice defaults are saved under ignored `.uvb/` files so local workers can share the dashboard configuration.
+- A local realtime voice-agent sidecar is staged at `ws://127.0.0.1:8765/live` for the Pipecat-first / LiveKit-later path.
 
 ## Fast Local Launch
 
@@ -41,7 +42,42 @@ cd D:\UVB-KnightBot-Export
 .\scripts\create-desktop-shortcut.ps1
 ```
 
-The shortcut opens UVB at `http://localhost:3010` and starts the Telegram worker unless `-SkipTelegram` is used.
+The shortcut opens UVB at `http://localhost:3010` and starts the realtime voice sidecar and Telegram worker unless `-SkipVoiceAgent` or `-SkipTelegram` is used.
+
+## Realtime Voice Sidecar
+
+UVB keeps the cockpit frontend in Next.js and runs realtime voice behind it as a local sidecar. The first sidecar implementation uses the stable local providers already running on this machine:
+
+- Faster Whisper for STT
+- vLLM/OpenAI-compatible chat on `8003`
+- Kokoro for TTS
+
+The sidecar exposes a WebSocket bridge at `ws://127.0.0.1:8765/live`. This is the first working runway toward Pipecat, Parakeet Realtime EOU, Chatterbox Turbo, VibeVoice-Realtime, and later LiveKit transport.
+
+Install sidecar dependencies once:
+
+```powershell
+cd D:\UVB-KnightBot-Export
+.\services\voice-agent\install.ps1
+```
+
+Run only the sidecar:
+
+```powershell
+cd D:\UVB-KnightBot-Export
+bun run voice-agent
+```
+
+Optional Pipecat runtime install:
+
+```powershell
+.\services\voice-agent\install.ps1 -WithPipecat
+```
+
+The current sidecar mode is `baseline-websocket`: it uses the working Faster
+Whisper, vLLM, and Kokoro services today while preserving a stable contract for
+Pipecat, Parakeet Realtime EOU, Chatterbox Turbo, VibeVoice-Realtime, and
+LiveKit transport upgrades.
 
 ## Telegram Bridge
 
@@ -73,6 +109,7 @@ bun run telegram
 - OpenAI-compatible model bridge with configurable backend
 - Typing indicators, message actions (copy, regenerate, bookmark)
 - Kokoro spoken replies with configurable voice and volume
+- Live Voice mode through the local sidecar for turn-level STT → LLM → TTS with latency metrics
 
 ### Voice Analysis
 - Real-time recording and file upload (WAV, MP3, FLAC, OGG, M4A)
@@ -103,6 +140,7 @@ bun run telegram
 ### Settings
 - **Profile**: display name, email, password management
 - **Voice & Audio**: TTS/STT engine selection, speech rate, barge-in toggle
+- **Live Voice**: sidecar URL, transport, VAD, STT/TTS provider slots, voice profile, and voice identity prompt
 - **Appearance**: theme (Galaxy Dark, Deep Space, Neon Night), accent colors, particle effects
 - **AI Settings**: model backend (LM Studio/Ollama/API), context window, temperature, CoT, RAG
 - **Security**: local-only data, AES-256 encryption, auto-save, telemetry toggle

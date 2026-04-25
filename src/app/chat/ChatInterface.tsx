@@ -35,6 +35,18 @@ function generateId() {
   return Math.random().toString(36).substring(2, 11);
 }
 
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = String(reader.result ?? "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read audio chunk."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function formatMicrophoneError(error: unknown) {
   const message = error instanceof Error ? error.message : "Microphone access failed.";
   const name = error instanceof DOMException ? error.name : "";
@@ -186,10 +198,23 @@ export default function ChatInterface() {
   const [isSpeechPaused, setIsSpeechPaused] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceLevels, setVoiceLevels] = useState<number[]>(Array(32).fill(0.05));
+  const [liveVoiceEnabled, setLiveVoiceEnabled] = useState(false);
+  const [liveVoiceConnected, setLiveVoiceConnected] = useState(false);
+  const [liveVoiceRecording, setLiveVoiceRecording] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [liveMetrics, setLiveMetrics] = useState<{
+    sttMs?: number;
+    llmMs?: number;
+    ttsMs?: number;
+    totalMs?: number;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const liveSocketRef = useRef<WebSocket | null>(null);
+  const liveRecorderRef = useRef<MediaRecorder | null>(null);
+  const liveStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const voiceFrameRef = useRef<number | null>(null);
@@ -235,6 +260,14 @@ export default function ChatInterface() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeThread?.messages]);
+
+  useEffect(() => {
+    return () => {
+      liveSocketRef.current?.close();
+      liveRecorderRef.current?.stop();
+      liveStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
 
   const createNewThread = () => {
     const thread = {
@@ -632,6 +665,245 @@ export default function ChatInterface() {
     await startRecording();
   };
 
+  const ensureThreadForLiveVoice = (titleSeed = "Live Voice") => {
+    const current = useAppStore.getState();
+    if (current.activeThreadId) return current.activeThreadId;
+
+    const thread = {
+      id: generateId(),
+      title: titleSeed.slice(0, 40) + (titleSeed.length > 40 ? "..." : ""),
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      context: "Live voice session",
+    };
+    addThread(thread);
+    setActiveThread(thread.id);
+    return thread.id;
+  };
+
+  const playLiveAudio = async (audioBase64: string, contentType = "audio/wav") => {
+    const binary = window.atob(audioBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+
+    const audioUrl = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+
+    if (!audioPlayerRef.current) {
+      audioPlayerRef.current = new Audio();
+    }
+
+    audioPlayerRef.current.pause();
+    audioPlayerRef.current.src = audioUrl;
+    audioPlayerRef.current.volume = voiceSettings.volume;
+    audioPlayerRef.current.onplay = () => {
+      setIsSpeaking(true);
+      setIsSpeechPaused(false);
+    };
+    audioPlayerRef.current.onended = () => {
+      URL.revokeObjectURL(audioUrl);
+      setIsSpeaking(false);
+      setIsSpeechPaused(false);
+      setActivityStatus("Live voice ready.");
+    };
+    await audioPlayerRef.current.play();
+  };
+
+  const handleLiveVoiceEvent = async (event: MessageEvent<string>) => {
+    const data = JSON.parse(event.data) as {
+      type?: string;
+      message?: string;
+      text?: string;
+      audioBase64?: string;
+      contentType?: string;
+      sttMs?: number;
+      llmMs?: number;
+      ttsMs?: number;
+      totalMs?: number;
+    };
+
+    if (data.type === "ready") {
+      setLiveVoiceConnected(true);
+      setActivityStatus(data.message ?? "Live voice connected.");
+      return;
+    }
+
+    if (data.type === "status") {
+      setActivityStatus(data.message ?? "Live voice working...");
+      return;
+    }
+
+    if (data.type === "transcript" && data.text) {
+      const threadId = ensureThreadForLiveVoice(data.text);
+      setLiveTranscript(data.text);
+      addMessage(threadId, {
+        id: generateId(),
+        role: "user",
+        content: data.text,
+        timestamp: Date.now(),
+        type: "voice",
+      });
+      return;
+    }
+
+    if (data.type === "assistant" && data.text) {
+      const threadId = ensureThreadForLiveVoice();
+      addMessage(threadId, {
+        id: generateId(),
+        role: "assistant",
+        content: data.text,
+        timestamp: Date.now(),
+        type: "text",
+      });
+      return;
+    }
+
+    if (data.type === "audio" && data.audioBase64) {
+      await playLiveAudio(data.audioBase64, data.contentType);
+      return;
+    }
+
+    if (data.type === "metrics") {
+      setLiveMetrics({
+        sttMs: data.sttMs,
+        llmMs: data.llmMs,
+        ttsMs: data.ttsMs,
+        totalMs: data.totalMs,
+      });
+      setActivityStatus(
+        `Live turn complete: STT ${data.sttMs ?? "-"}ms | LLM ${
+          data.llmMs ?? "-"
+        }ms | TTS ${data.ttsMs ?? "-"}ms`
+      );
+      return;
+    }
+
+    if (data.type === "error") {
+      setActivityStatus(`Live voice error: ${data.message ?? "Unknown sidecar error."}`);
+    }
+  };
+
+  const connectLiveVoice = async (stream: MediaStream) => {
+    const socket = new WebSocket(voiceSettings.liveVoiceUrl);
+    liveSocketRef.current = socket;
+
+    socket.onopen = () => {
+      const history =
+        useAppStore
+          .getState()
+          .threads.find((thread) => thread.id === activeThreadId)
+          ?.messages.filter((message) => message.role === "user" || message.role === "assistant")
+          .slice(-16)
+          .map((message) => ({
+            role: message.role,
+            content: message.content,
+          })) ?? [];
+
+      socket.send(
+        JSON.stringify({
+          type: "start",
+          modelSettings,
+          voiceSettings,
+          history,
+        })
+      );
+      setLiveVoiceConnected(true);
+      setActivityStatus("Live voice connected. Listening...");
+    };
+
+    socket.onmessage = (event) => {
+      void handleLiveVoiceEvent(event);
+    };
+    socket.onerror = () => {
+      setActivityStatus("Live voice sidecar connection failed. Check the voice-agent window.");
+    };
+    socket.onclose = () => {
+      setLiveVoiceConnected(false);
+      setLiveVoiceRecording(false);
+      if (liveVoiceEnabled) {
+        setActivityStatus("Live voice disconnected.");
+      }
+    };
+
+    const recorder = new MediaRecorder(stream);
+    liveRecorderRef.current = recorder;
+    recorder.ondataavailable = (event) => {
+      if (!event.data.size || socket.readyState !== WebSocket.OPEN) return;
+      void blobToBase64(event.data).then((data) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "audio", data }));
+        }
+      });
+    };
+    recorder.start(500);
+  };
+
+  const startLiveVoice = async () => {
+    stopSpeech();
+    setLiveVoiceEnabled(true);
+    setLiveTranscript("");
+    setLiveMetrics(null);
+    setInputMode("voice");
+    setActivityStatus("Starting live voice sidecar session...");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      liveStreamRef.current = stream;
+      startVoiceLevelMonitor(stream);
+      await connectLiveVoice(stream);
+      setLiveVoiceRecording(true);
+    } catch (error) {
+      setLiveVoiceEnabled(false);
+      setLiveVoiceConnected(false);
+      setLiveVoiceRecording(false);
+      await stopVoiceLevelMonitor();
+      setActivityStatus(formatMicrophoneError(error));
+    }
+  };
+
+  const stopLiveVoiceTurn = async () => {
+    liveRecorderRef.current?.stop();
+    liveRecorderRef.current = null;
+    liveStreamRef.current?.getTracks().forEach((track) => track.stop());
+    liveStreamRef.current = null;
+    setLiveVoiceRecording(false);
+    await stopVoiceLevelMonitor();
+
+    if (liveSocketRef.current?.readyState === WebSocket.OPEN) {
+      liveSocketRef.current.send(JSON.stringify({ type: "stop" }));
+      setActivityStatus("Processing live voice turn...");
+    }
+  };
+
+  const cancelLiveVoice = async () => {
+    liveRecorderRef.current?.stop();
+    liveRecorderRef.current = null;
+    liveStreamRef.current?.getTracks().forEach((track) => track.stop());
+    liveStreamRef.current = null;
+    if (liveSocketRef.current?.readyState === WebSocket.OPEN) {
+      liveSocketRef.current.send(JSON.stringify({ type: "cancel" }));
+    }
+    liveSocketRef.current?.close();
+    liveSocketRef.current = null;
+    setLiveVoiceEnabled(false);
+    setLiveVoiceConnected(false);
+    setLiveVoiceRecording(false);
+    setLiveTranscript("");
+    await stopVoiceLevelMonitor();
+    setActivityStatus("Live voice cancelled.");
+  };
+
+  const toggleLiveVoice = async () => {
+    if (liveVoiceEnabled) {
+      await cancelLiveVoice();
+      return;
+    }
+
+    await startLiveVoice();
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -730,6 +1002,31 @@ export default function ChatInterface() {
           <div className="flex items-center justify-between gap-3 border-b border-uvb-border/20 bg-uvb-matte-black/30 px-4 py-2 text-[11px]">
             <span className="text-uvb-text-secondary">{activityStatus}</span>
             <div className="flex items-center gap-2">
+              <button
+                onClick={toggleLiveVoice}
+                title={
+                  liveVoiceEnabled
+                    ? "Disconnect the live voice sidecar"
+                    : "Start live sidecar voice mode"
+                }
+                aria-label={liveVoiceEnabled ? "Disconnect live voice" : "Start live voice"}
+                className={`rounded-full border px-2 py-0.5 ${
+                  liveVoiceEnabled
+                    ? "border-uvb-neon-green/40 bg-uvb-neon-green/10 text-uvb-neon-green"
+                    : "border-uvb-border/40 text-uvb-text-secondary hover:bg-uvb-light-gray/20"
+                }`}
+              >
+                {liveVoiceEnabled
+                  ? liveVoiceConnected
+                    ? "Live voice on"
+                    : "Live connecting"
+                  : "Live voice"}
+              </button>
+              {liveMetrics && (
+                <span className="rounded-full border border-uvb-steel-blue/30 px-2 py-0.5 text-uvb-text-muted">
+                  {liveMetrics.totalMs ?? "-"}ms turn
+                </span>
+              )}
               {voiceSettings.autoSpeak && (
                 <span className="rounded-full border border-uvb-neon-green/20 px-2 py-0.5 text-uvb-neon-green/80">
                   Speak replies on
@@ -948,14 +1245,51 @@ export default function ChatInterface() {
 
           {/* Input area */}
           <div className="p-4 border-t border-uvb-border/40">
-            {(isRecording || isTranscribing) && (
+            {(isRecording || isTranscribing || liveVoiceEnabled) && (
               <div className="mb-3 flex items-center gap-3 p-3 rounded-lg bg-uvb-deep-teal/20 border border-uvb-neon-green/20">
-                <div className="w-3 h-3 rounded-full bg-red-500 status-pulse" />
+                <div
+                  className={`w-3 h-3 rounded-full ${
+                    liveVoiceConnected || isRecording ? "bg-red-500 status-pulse" : "bg-uvb-accent-yellow"
+                  }`}
+                />
                 <span className="text-sm text-uvb-text-secondary">
-                  {isTranscribing ? "Transcribing..." : "Recording..."}
+                  {liveVoiceEnabled
+                    ? liveVoiceRecording
+                      ? "Live voice listening..."
+                      : "Live voice processing..."
+                    : isTranscribing
+                    ? "Transcribing..."
+                    : "Recording..."}
                 </span>
-                <VoiceVisualizer isActive={isRecording} levels={voiceLevels} />
+                <VoiceVisualizer isActive={isRecording || liveVoiceRecording} levels={voiceLevels} />
+                {liveTranscript && (
+                  <span className="max-w-sm truncate text-xs text-uvb-text-muted">
+                    {liveTranscript}
+                  </span>
+                )}
                 <div className="ml-auto flex items-center gap-2">
+                  {liveVoiceEnabled && (
+                    <>
+                      {liveVoiceRecording && (
+                        <button
+                          onClick={stopLiveVoiceTurn}
+                          title="Stop listening and send this live voice turn to the sidecar"
+                          aria-label="Stop live voice and answer"
+                          className="rounded-lg border border-uvb-neon-green/30 bg-uvb-neon-green/10 px-3 py-1.5 text-xs text-uvb-neon-green hover:bg-uvb-neon-green/20"
+                        >
+                          Stop & answer
+                        </button>
+                      )}
+                      <button
+                        onClick={cancelLiveVoice}
+                        title="Cancel live voice mode and close the sidecar connection"
+                        aria-label="Cancel live voice mode"
+                        className="rounded-lg border border-red-400/30 px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/10"
+                      >
+                        End live
+                      </button>
+                    </>
+                  )}
                   {isRecording && (
                     <>
                       <button
@@ -1012,6 +1346,22 @@ export default function ChatInterface() {
                   aria-label={isRecording ? "Stop recording" : "Record voice"}
                 >
                   {isRecording ? <StopIcon className="w-4 h-4" /> : <MicrophoneIcon className="w-4 h-4" />}
+                </button>
+                <button
+                  onClick={toggleLiveVoice}
+                  className={`p-2 rounded-lg transition-colors ${
+                    liveVoiceEnabled
+                      ? "bg-uvb-neon-green/15 text-uvb-neon-green ring-1 ring-uvb-neon-green/30"
+                      : "text-uvb-text-muted hover:text-uvb-text-secondary"
+                  }`}
+                  title={
+                    liveVoiceEnabled
+                      ? "End live sidecar voice mode"
+                      : "Start live sidecar voice mode"
+                  }
+                  aria-label={liveVoiceEnabled ? "End live voice" : "Start live voice"}
+                >
+                  <Sparkles className="h-4 w-4" />
                 </button>
               </div>
               <div className="flex-1 relative">

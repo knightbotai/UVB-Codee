@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "telegram": "node scripts/telegram-worker.mjs",
+    "voice-agent": "python services/voice-agent/voice_agent.py",
     "lint": "eslint",
     "typecheck": "tsc --noEmit"
   },
