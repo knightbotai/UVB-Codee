@@ -32,6 +32,23 @@ function generateId() {
   return Math.random().toString(36).substring(2, 11);
 }
 
+function formatMicrophoneError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Microphone access failed.";
+  const name = error instanceof DOMException ? error.name : "";
+  const denied =
+    name === "NotAllowedError" ||
+    name === "SecurityError" ||
+    message.toLowerCase().includes("permission denied");
+
+  if (!denied) return `Mic error: ${message}`;
+
+  return [
+    "Mic permission is blocked for this browser tab.",
+    "Allow microphone access for localhost:3010 in the browser/site permissions, then refresh UVB and press the mic again.",
+    "If no prompt appears, use the browser address-bar permissions icon or app settings to reset microphone access.",
+  ].join(" ");
+}
+
 function getResponseForInput(input: string): string {
   const lower = input.toLowerCase();
   let bestMatch: { response: string; score: number } | null = null;
@@ -383,9 +400,8 @@ export default function ChatInterface() {
       setIsRecording(true);
       setActivityStatus("Recording voice...");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Microphone access failed.";
       setIsRecording(false);
-      setActivityStatus(`Mic error: ${message}`);
+      setActivityStatus(formatMicrophoneError(error));
     }
   };
 
