@@ -89,15 +89,53 @@ const FALLBACK_RESPONSES = [
   "I'm here to help with that. KnightBot can assist with a wide range of tasks including code analysis, voice processing, image understanding, knowledge management, and more. Could you provide more details about what you're looking for so I can give you a more targeted response?",
 ];
 
+interface ChatConfig {
+  llmConfigured: boolean;
+  connected: boolean;
+  baseUrl: string;
+  model: string;
+  error?: string;
+}
+
+async function fetchChatConfig(): Promise<ChatConfig | null> {
+  try {
+    const response = await fetch("/api/chat/config");
+    if (!response.ok) return null;
+    return (await response.json()) as ChatConfig;
+  } catch {
+    return null;
+  }
+}
+
+async function sendChatToModel(messages: Array<{ role: "user" | "assistant"; content: string }>) {
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+  });
+  const data = (await response.json()) as { content?: string; error?: string };
+
+  if (!response.ok || !data.content) {
+    throw new Error(data.error ?? "The local model did not return a response.");
+  }
+
+  return data.content;
+}
+
 export default function ChatInterface() {
   const { threads, activeThreadId, addThread, addMessage, setActiveThread, isRecording, setIsRecording } =
     useAppStore();
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [inputMode, setInputMode] = useState<"text" | "voice">("text");
+  const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+
+  useEffect(() => {
+    fetchChatConfig().then(setChatConfig);
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -146,9 +184,19 @@ export default function ChatInterface() {
     setInput("");
     setIsTyping(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const response = getResponseForInput(userInput);
+    const priorMessages: Array<{ role: "user" | "assistant"; content: string }> =
+      activeThread?.messages
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .map((message) => ({
+          role: message.role as "user" | "assistant",
+          content: message.content,
+        })) ?? [];
+
+    try {
+      const response = await sendChatToModel([
+        ...priorMessages,
+        { role: "user", content: userInput },
+      ]);
       const aiMsg: ChatMessage = {
         id: generateId(),
         role: "assistant",
@@ -157,8 +205,19 @@ export default function ChatInterface() {
         type: "text",
       };
       addMessage(threadId!, aiMsg);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown local model error.";
+      const fallback = getResponseForInput(userInput);
+      addMessage(threadId!, {
+        id: generateId(),
+        role: "assistant",
+        content: `I could not reach the local model bridge yet.\n\n${message}\n\nDemo fallback:\n${fallback}`,
+        timestamp: Date.now(),
+        type: "text",
+      });
+    } finally {
       setIsTyping(false);
-    }, 1500 + Math.random() * 1500);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -217,6 +276,26 @@ export default function ChatInterface() {
 
         {/* Chat area */}
         <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 border-b border-uvb-border/30 bg-uvb-dark-gray/40 text-[11px] text-uvb-text-muted">
+            {chatConfig ? (
+              <>
+                <span
+                  className={
+                    chatConfig.connected
+                      ? "text-uvb-neon-green/90"
+                      : "text-uvb-accent-yellow/90"
+                  }
+                >
+                  {chatConfig.connected ? "Local model connected" : "Local model unavailable"}
+                </span>
+                <span>{chatConfig.model}</span>
+                <span>{chatConfig.baseUrl}</span>
+                {chatConfig.error && <span>{chatConfig.error}</span>}
+              </>
+            ) : (
+              <span>Checking local model bridge...</span>
+            )}
+          </div>
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {!activeThread || activeThread.messages.length === 0 ? (
