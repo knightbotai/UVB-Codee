@@ -22,6 +22,11 @@ import {
   MODEL_SETTINGS_UPDATED_EVENT,
   type ModelSettings,
 } from "@/lib/modelSettings";
+import {
+  loadVoiceSettings,
+  VOICE_SETTINGS_UPDATED_EVENT,
+  type VoiceSettings,
+} from "@/lib/voiceSettings";
 
 function generateId() {
   return Math.random().toString(36).substring(2, 11);
@@ -142,8 +147,16 @@ export default function ChatInterface() {
   const [isTyping, setIsTyping] = useState(false);
   const [inputMode, setInputMode] = useState<"text" | "voice">("text");
   const [modelSettings, setModelSettings] = useState<ModelSettings>(() => loadModelSettings());
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() => loadVoiceSettings());
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
+  const [activityStatus, setActivityStatus] = useState("Ready for text, voice, and media.");
+  const [lastFailedInput, setLastFailedInput] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
@@ -165,6 +178,20 @@ export default function ChatInterface() {
   }, []);
 
   useEffect(() => {
+    const refreshVoiceSettings = () => {
+      setVoiceSettings(loadVoiceSettings());
+    };
+
+    window.addEventListener(VOICE_SETTINGS_UPDATED_EVENT, refreshVoiceSettings);
+    window.addEventListener("storage", refreshVoiceSettings);
+
+    return () => {
+      window.removeEventListener(VOICE_SETTINGS_UPDATED_EVENT, refreshVoiceSettings);
+      window.removeEventListener("storage", refreshVoiceSettings);
+    };
+  }, []);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeThread?.messages]);
 
@@ -181,10 +208,42 @@ export default function ChatInterface() {
     setActiveThread(thread.id);
   };
 
-  const sendMessage = async () => {
-    if (!input.trim()) return;
+  const speakText = async (text: string) => {
+    if (!voiceSettings.autoSpeak || !text.trim()) return;
 
-    const userInput = input;
+    setActivityStatus("Speaking with Kokoro...");
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        endpoint: voiceSettings.ttsUrl,
+        voice: voiceSettings.ttsVoice,
+      }),
+    });
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error ?? "TTS playback failed.");
+    }
+
+    const audioBlob = await response.blob();
+    const audioUrl = URL.createObjectURL(audioBlob);
+
+    if (!audioPlayerRef.current) {
+      audioPlayerRef.current = new Audio();
+    }
+
+    audioPlayerRef.current.pause();
+    audioPlayerRef.current.src = audioUrl;
+    audioPlayerRef.current.volume = voiceSettings.volume;
+    audioPlayerRef.current.onended = () => URL.revokeObjectURL(audioUrl);
+    await audioPlayerRef.current.play();
+  };
+
+  const sendMessageWithText = async (userInput: string, messageType: ChatMessage["type"] = "text") => {
+    if (!userInput.trim()) return;
+
     let threadId = activeThreadId;
     if (!threadId) {
       const thread = {
@@ -205,14 +264,18 @@ export default function ChatInterface() {
       role: "user",
       content: userInput,
       timestamp: Date.now(),
-      type: "text",
+      type: messageType,
     };
     addMessage(threadId!, userMsg);
     setInput("");
     setIsTyping(true);
+    setLastFailedInput(null);
+    setActivityStatus("Thinking through the local model...");
 
+    const currentThread = useAppStore.getState().threads.find((thread) => thread.id === threadId);
     const priorMessages: Array<{ role: "user" | "assistant"; content: string }> =
-      activeThread?.messages
+      currentThread?.messages
+        .filter((message) => message.id !== userMsg.id)
         .filter((message) => message.role === "user" || message.role === "assistant")
         .map((message) => ({
           role: message.role as "user" | "assistant",
@@ -232,19 +295,107 @@ export default function ChatInterface() {
         type: "text",
       };
       addMessage(threadId!, aiMsg);
+      await speakText(response).catch((error) => {
+        const message = error instanceof Error ? error.message : "TTS failed.";
+        setActivityStatus(message);
+      });
+      setActivityStatus("Ready.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown local model error.";
-      const fallback = getResponseForInput(userInput);
       addMessage(threadId!, {
         id: generateId(),
         role: "assistant",
-        content: `I could not reach the local model bridge yet.\n\n${message}\n\nDemo fallback:\n${fallback}`,
+        content: `The local model bridge failed cleanly instead of pretending with demo text.\n\n${message}\n\nCheck Settings > AI Settings or the health badge in the top-right.`,
         timestamp: Date.now(),
         type: "text",
       });
+      setLastFailedInput(userInput);
+      setActivityStatus("Model failed. Settings or service health need attention.");
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const sendMessage = async () => {
+    await sendMessageWithText(input, "text");
+  };
+
+  const transcribeAudio = async (audioBlob: Blob) => {
+    const formData = new FormData();
+    formData.append("file", audioBlob, "uvb-recording.webm");
+    formData.append("endpoint", voiceSettings.sttUrl);
+    formData.append("model", voiceSettings.sttModel);
+
+    const response = await fetch("/api/stt", {
+      method: "POST",
+      body: formData,
+    });
+    const data = (await response.json()) as { text?: string; error?: string };
+
+    if (!response.ok || !data.text) {
+      throw new Error(data.error ?? "STT returned no transcript.");
+    }
+
+    return data.text;
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+  };
+
+  const startRecording = async () => {
+    setInputMode("voice");
+    setActivityStatus("Requesting microphone...");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        setIsRecording(false);
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        setActivityStatus("Transcribing with local Whisper...");
+
+        try {
+          const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+          const transcript = await transcribeAudio(audioBlob);
+          setInput(transcript);
+          setActivityStatus("Transcript ready. Sending to KnightBot...");
+          await sendMessageWithText(transcript, "voice");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Voice transcription failed.";
+          setActivityStatus(`STT error: ${message}`);
+        }
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setActivityStatus("Recording voice...");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Microphone access failed.";
+      setIsRecording(false);
+      setActivityStatus(`Mic error: ${message}`);
+    }
+  };
+
+  const toggleRecording = async () => {
+    if (isRecording) {
+      stopRecording();
+      return;
+    }
+
+    await startRecording();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -252,6 +403,24 @@ export default function ChatInterface() {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  const attachFiles = (files: FileList | null) => {
+    if (!files?.length) return;
+
+    const summaries = Array.from(files).map((file) => {
+      const sizeKb = Math.max(1, Math.round(file.size / 1024));
+      return `[Attached ${file.type || "file"}: ${file.name}, ${sizeKb} KB]`;
+    });
+
+    setInput((current) => [current.trim(), ...summaries].filter(Boolean).join("\n"));
+    setActivityStatus("Attachment noted. Vision/file routing is staged in chat context.");
+  };
+
+  const openAttachmentPicker = (accept: string) => {
+    if (!fileInputRef.current) return;
+    fileInputRef.current.accept = accept;
+    fileInputRef.current.click();
   };
 
   return (
@@ -322,6 +491,24 @@ export default function ChatInterface() {
             ) : (
               <span>Checking local model bridge...</span>
             )}
+          </div>
+          <div className="flex items-center justify-between gap-3 border-b border-uvb-border/20 bg-uvb-matte-black/30 px-4 py-2 text-[11px]">
+            <span className="text-uvb-text-secondary">{activityStatus}</span>
+            <div className="flex items-center gap-2">
+              {voiceSettings.autoSpeak && (
+                <span className="rounded-full border border-uvb-neon-green/20 px-2 py-0.5 text-uvb-neon-green/80">
+                  Speak replies on
+                </span>
+              )}
+              {lastFailedInput && (
+                <button
+                  onClick={() => sendMessageWithText(lastFailedInput, "text")}
+                  className="rounded-full border border-uvb-accent-yellow/40 px-2 py-0.5 text-uvb-accent-yellow hover:bg-uvb-accent-yellow/10"
+                >
+                  Retry last
+                </button>
+              )}
+            </div>
           </div>
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -465,7 +652,7 @@ export default function ChatInterface() {
                 </span>
                 <VoiceVisualizer isActive={true} />
                 <button
-                  onClick={() => setIsRecording(false)}
+                  onClick={stopRecording}
                   className="ml-auto p-1.5 rounded-lg hover:bg-uvb-light-gray/40 text-uvb-text-secondary"
                 >
                   <StopIcon className="w-4 h-4" />
@@ -485,17 +672,15 @@ export default function ChatInterface() {
                   <PaperAirplaneIcon className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => {
-                    setInputMode("voice");
-                    setIsRecording(!isRecording);
-                  }}
+                  onClick={toggleRecording}
                   className={`p-2 rounded-lg transition-colors ${
                     inputMode === "voice"
                       ? "bg-uvb-deep-teal/30 text-uvb-neon-green"
                       : "text-uvb-text-muted hover:text-uvb-text-secondary"
                   }`}
+                  aria-label={isRecording ? "Stop recording" : "Record voice"}
                 >
-                  <MicrophoneIcon className="w-4 h-4" />
+                  {isRecording ? <StopIcon className="w-4 h-4" /> : <MicrophoneIcon className="w-4 h-4" />}
                 </button>
               </div>
               <div className="flex-1 relative">
@@ -508,12 +693,30 @@ export default function ChatInterface() {
                   rows={1}
                 />
                 <div className="absolute right-2 bottom-2 flex gap-1">
-                  <button className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors">
+                  <button
+                    onClick={() => openAttachmentPicker("image/*")}
+                    className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                    aria-label="Attach image"
+                  >
                     <PhotoIcon className="w-4 h-4" />
                   </button>
-                  <button className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors">
+                  <button
+                    onClick={() => openAttachmentPicker("video/*,audio/*,.pdf,.txt,.md,.json,.csv")}
+                    className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                    aria-label="Attach media or file"
+                  >
                     <FilmIcon className="w-4 h-4" />
                   </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => {
+                      attachFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
                 </div>
               </div>
               <button

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useAppStore } from "@/stores/appStore";
 import {
@@ -8,8 +9,24 @@ import {
   UserCircleIcon,
 } from "@heroicons/react/24/outline";
 
+interface HealthService {
+  id: string;
+  name: string;
+  url: string;
+  online: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+interface HealthResponse {
+  status: "online" | "degraded" | "offline";
+  services: HealthService[];
+}
+
 export default function Header() {
   const { activeSection } = useAppStore();
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [showHealth, setShowHealth] = useState(false);
 
   const sectionTitles: Record<string, string> = {
     chat: "KnightBot Chat",
@@ -19,6 +36,41 @@ export default function Header() {
     memory: "Memory Bank",
     settings: "Settings",
   };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const refreshHealth = async () => {
+      try {
+        const response = await fetch("/api/health", { cache: "no-store" });
+        const data = (await response.json()) as HealthResponse;
+        if (isMounted) setHealth(data);
+      } catch {
+        if (isMounted) {
+          setHealth({ status: "offline", services: [] });
+        }
+      }
+    };
+
+    refreshHealth();
+    const interval = window.setInterval(refreshHealth, 30000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const onlineCount = health?.services.filter((service) => service.online).length ?? 0;
+  const totalCount = health?.services.length ?? 0;
+  const statusLabel =
+    health?.status === "online" ? "Online" : health?.status === "degraded" ? "Degraded" : "Offline";
+  const statusColor =
+    health?.status === "online"
+      ? "bg-uvb-neon-green"
+      : health?.status === "degraded"
+      ? "bg-uvb-accent-yellow"
+      : "bg-red-500";
 
   return (
     <header className="h-16 flex items-center justify-between px-6 border-b border-uvb-border/40">
@@ -47,9 +99,59 @@ export default function Header() {
         </button>
 
         {/* Status indicator */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-uvb-deep-teal/20 border border-uvb-deep-teal/30">
-          <span className="w-2 h-2 rounded-full bg-uvb-neon-green status-pulse" />
-          <span className="text-xs text-uvb-text-secondary">Online</span>
+        <div className="relative">
+          <button
+            onClick={() => setShowHealth((current) => !current)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-uvb-deep-teal/20 border border-uvb-deep-teal/30"
+          >
+            <span className={`w-2 h-2 rounded-full ${statusColor} status-pulse`} />
+            <span className="text-xs text-uvb-text-secondary">
+              {statusLabel}
+              {totalCount > 0 ? ` ${onlineCount}/${totalCount}` : ""}
+            </span>
+          </button>
+          {showHealth && (
+            <div className="absolute right-0 top-10 z-50 w-80 glass-panel p-3 shadow-2xl">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-uvb-text-primary">Local service health</p>
+                <button
+                  onClick={() => setShowHealth(false)}
+                  className="text-xs text-uvb-text-muted hover:text-uvb-text-primary"
+                >
+                  close
+                </button>
+              </div>
+              <div className="space-y-2">
+                {health?.services.map((service) => (
+                  <div
+                    key={service.id}
+                    className="rounded-lg border border-uvb-border/40 bg-uvb-dark-gray/60 p-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            service.online ? "bg-uvb-neon-green" : "bg-red-500"
+                          }`}
+                        />
+                        <span className="text-xs text-uvb-text-primary">{service.name}</span>
+                      </div>
+                      <span className="text-[10px] text-uvb-text-muted">
+                        {service.latencyMs ? `${service.latencyMs}ms` : "n/a"}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-[10px] text-uvb-text-muted">{service.url}</p>
+                    {service.error && (
+                      <p className="mt-1 text-[10px] text-red-300">{service.error}</p>
+                    )}
+                  </div>
+                ))}
+                {!health?.services.length && (
+                  <p className="text-xs text-red-300">Health route is not responding.</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Profile */}

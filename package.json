@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "telegram": "node scripts/telegram-worker.mjs",
     "lint": "eslint",
     "typecheck": "tsc --noEmit"
   },

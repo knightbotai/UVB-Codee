@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   UserCircleIcon,
@@ -18,6 +18,11 @@ import {
   saveModelSettings,
   type ModelSettings,
 } from "@/lib/modelSettings";
+import {
+  loadVoiceSettings,
+  saveVoiceSettings,
+  type VoiceSettings,
+} from "@/lib/voiceSettings";
 
 const MODEL_PRESETS = [
   {
@@ -57,6 +62,13 @@ export default function SettingsPage() {
     state: "idle" | "testing" | "connected" | "error" | "saved";
     message: string;
   }>({ state: "idle", message: "" });
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() => loadVoiceSettings());
+  const [voiceStatus, setVoiceStatus] = useState<{
+    state: "idle" | "saved" | "testing" | "connected" | "error";
+    message: string;
+  }>({ state: "idle", message: "" });
+  const [profileStatus, setProfileStatus] = useState("");
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const tabs = [
     { id: "profile", label: "Profile", icon: UserCircleIcon },
@@ -70,6 +82,11 @@ export default function SettingsPage() {
   const updateModelSettings = (updates: Partial<ModelSettings>) => {
     setModelSettings((current) => ({ ...current, ...updates }));
     setModelStatus({ state: "idle", message: "" });
+  };
+
+  const updateVoiceSettings = (updates: Partial<VoiceSettings>) => {
+    setVoiceSettings((current) => ({ ...current, ...updates }));
+    setVoiceStatus({ state: "idle", message: "" });
   };
 
   const testModelConnection = async (settings = modelSettings) => {
@@ -111,6 +128,91 @@ export default function SettingsPage() {
   const saveCurrentModelSettings = () => {
     saveModelSettings(modelSettings);
     setModelStatus({ state: "saved", message: "Saved. Chat will use this model now." });
+  };
+
+  const saveCurrentVoiceSettings = () => {
+    saveVoiceSettings(voiceSettings);
+    setVoiceStatus({ state: "saved", message: "Saved. Chat voice will use these endpoints now." });
+  };
+
+  const testVoiceConnection = async () => {
+    setVoiceStatus({ state: "testing", message: "Testing voice endpoints..." });
+
+    try {
+      const ttsResponse = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: "UVB voice bridge is online.",
+          endpoint: voiceSettings.ttsUrl,
+          voice: voiceSettings.ttsVoice,
+        }),
+      });
+
+      if (!ttsResponse.ok) {
+        const data = (await ttsResponse.json().catch(() => ({}))) as { error?: string };
+        setVoiceStatus({
+          state: "error",
+          message: data.error ?? "TTS endpoint did not respond cleanly.",
+        });
+        return false;
+      }
+
+      setVoiceStatus({
+        state: "connected",
+        message: "TTS responded. STT will be tested from the chat mic with real audio.",
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown voice endpoint error.";
+      setVoiceStatus({ state: "error", message });
+      return false;
+    }
+  };
+
+  const exportProfile = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      app: "UVB KnightBot",
+      modelSettings,
+      voiceSettings,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "uvb-knightbot-profile.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    setProfileStatus("Exported model and voice profile.");
+  };
+
+  const importProfile = async (file: File) => {
+    try {
+      const data = JSON.parse(await file.text()) as {
+        modelSettings?: Partial<ModelSettings>;
+        voiceSettings?: Partial<VoiceSettings>;
+      };
+
+      if (data.modelSettings) {
+        const nextModelSettings = { ...DEFAULT_MODEL_SETTINGS, ...data.modelSettings };
+        setModelSettings(nextModelSettings);
+        saveModelSettings(nextModelSettings);
+      }
+
+      if (data.voiceSettings) {
+        const nextVoiceSettings = { ...voiceSettings, ...data.voiceSettings };
+        setVoiceSettings(nextVoiceSettings);
+        saveVoiceSettings(nextVoiceSettings);
+      }
+
+      setProfileStatus("Imported profile and applied settings.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not import profile.";
+      setProfileStatus(message);
+    }
   };
 
   return (
@@ -235,62 +337,129 @@ export default function SettingsPage() {
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
                         TTS Engine
                       </label>
-                      <select className="input-field">
-                        <option>Local (Piper TTS)</option>
-                        <option>Neural Cloud TTS</option>
-                        <option>Edge TTS</option>
-                      </select>
+                      <input
+                        type="url"
+                        value={voiceSettings.ttsUrl}
+                        onChange={(event) =>
+                          updateVoiceSettings({ ttsUrl: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="http://127.0.0.1:8880/v1/audio/speech"
+                      />
                     </div>
                     <div>
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
                         Voice Profile
                       </label>
-                      <select className="input-field">
-                        <option>Neural-Natural-Female-v3</option>
-                        <option>Neural-Natural-Male-v2</option>
-                        <option>Custom Voice Clone</option>
-                      </select>
+                      <input
+                        type="text"
+                        value={voiceSettings.ttsVoice}
+                        onChange={(event) =>
+                          updateVoiceSettings({ ttsVoice: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="af_nova"
+                      />
                     </div>
                     <div>
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
-                        Speech Rate
+                        Playback Volume
                       </label>
                       <input
                         type="range"
-                        min="0.5"
-                        max="2"
-                        step="0.1"
-                        defaultValue="1.0"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={voiceSettings.volume}
+                        onChange={(event) =>
+                          updateVoiceSettings({ volume: Number(event.target.value) })
+                        }
                         className="w-full accent-uvb-neon-green"
                       />
                       <div className="flex justify-between text-[10px] text-uvb-text-muted">
-                        <span>0.5x</span>
-                        <span>1.0x</span>
-                        <span>2.0x</span>
+                        <span>Muted</span>
+                        <span>{Math.round(voiceSettings.volume * 100)}%</span>
+                        <span>Full</span>
                       </div>
                     </div>
                     <div>
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
                         STT Engine
                       </label>
-                      <select className="input-field">
-                        <option>Whisper (Local)</option>
-                        <option>Whisper.cpp (GPU)</option>
-                        <option>faster-whisper</option>
-                      </select>
+                      <input
+                        type="url"
+                        value={voiceSettings.sttUrl}
+                        onChange={(event) =>
+                          updateVoiceSettings({ sttUrl: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="http://127.0.0.1:8001/v1/audio/transcriptions"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-uvb-text-muted block mb-1.5">
+                        STT Model
+                      </label>
+                      <input
+                        type="text"
+                        value={voiceSettings.sttModel}
+                        onChange={(event) =>
+                          updateVoiceSettings({ sttModel: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="Systran/faster-whisper-large-v3"
+                      />
                     </div>
                     <div className="flex items-center justify-between p-3 rounded-lg bg-uvb-dark-gray/40">
                       <div>
                         <p className="text-sm text-uvb-text-primary">
-                          Barge-in Support
+                          Speak Replies
                         </p>
                         <p className="text-xs text-uvb-text-muted">
-                          Allow interrupting the AI while speaking
+                          Automatically play Kokoro audio after KnightBot responds
                         </p>
                       </div>
-                      <button className="w-11 h-6 rounded-full bg-uvb-neon-green/30 relative">
-                        <span className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-uvb-neon-green shadow" />
+                      <button
+                        onClick={() =>
+                          updateVoiceSettings({ autoSpeak: !voiceSettings.autoSpeak })
+                        }
+                        className={`w-11 h-6 rounded-full relative ${
+                          voiceSettings.autoSpeak
+                            ? "bg-uvb-neon-green/30"
+                            : "bg-uvb-light-gray"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-0.5 w-5 h-5 rounded-full shadow transition-all ${
+                            voiceSettings.autoSpeak
+                              ? "right-0.5 bg-uvb-neon-green"
+                              : "left-0.5 bg-uvb-text-muted"
+                          }`}
+                        />
                       </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 pt-2">
+                      <button
+                        onClick={testVoiceConnection}
+                        className="btn-ghost"
+                        disabled={voiceStatus.state === "testing"}
+                      >
+                        Test TTS
+                      </button>
+                      <button onClick={saveCurrentVoiceSettings} className="btn-primary">
+                        Save Voice Settings
+                      </button>
+                      {voiceStatus.message && (
+                        <span
+                          className={`text-xs ${
+                            voiceStatus.state === "error"
+                              ? "text-red-400"
+                              : "text-uvb-neon-green"
+                          }`}
+                        >
+                          {voiceStatus.message}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -558,6 +727,38 @@ export default function SettingsPage() {
                           {modelStatus.message}
                         </span>
                       )}
+                    </div>
+                    <div className="rounded-lg bg-uvb-dark-gray/40 p-3">
+                      <p className="text-sm text-uvb-text-primary">Portable Profile</p>
+                      <p className="mt-1 text-xs text-uvb-text-muted">
+                        Export or import model and voice settings so another local agent can pick up
+                        the same UVB configuration quickly.
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <button onClick={exportProfile} className="btn-ghost">
+                          Export Profile
+                        </button>
+                        <button
+                          onClick={() => importInputRef.current?.click()}
+                          className="btn-ghost"
+                        >
+                          Import Profile
+                        </button>
+                        <input
+                          ref={importInputRef}
+                          type="file"
+                          accept="application/json"
+                          className="hidden"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void importProfile(file);
+                            event.target.value = "";
+                          }}
+                        />
+                        {profileStatus && (
+                          <span className="text-xs text-uvb-neon-green">{profileStatus}</span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center justify-between p-3 rounded-lg bg-uvb-dark-gray/40">
                       <div>
