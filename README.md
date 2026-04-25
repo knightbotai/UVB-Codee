@@ -16,14 +16,63 @@ The **Ultimate Voice Bridge** is a web-based AI assistant interface that bridges
 
 Designed to run on high-end consumer hardware with local LLMs (LM Studio, Ollama), the UVB keeps everything on your machine — no cloud dependencies required.
 
+## Current Local Cockpit Status
+
+UVB is now wired for the local KnightBot stack:
+
+- Chat uses an OpenAI-compatible local model endpoint, defaulting to `http://127.0.0.1:8003/v1`.
+- Dashboard voice recording uses local Faster Whisper at `http://127.0.0.1:8001/v1/audio/transcriptions`.
+- Spoken replies use local Kokoro TTS at `http://127.0.0.1:8880/v1/audio/speech`.
+- The top-right health badge checks LLM, STT, TTS, Qdrant, and reranker services.
+- Settings can export/import the UVB model and voice profile for quick recovery by another agent.
+- Runtime model/voice defaults are saved under ignored `.uvb/` files so local workers can share the dashboard configuration.
+
+## Fast Local Launch
+
+```powershell
+cd D:\UVB-KnightBot-Export
+.\scripts\start-uvb.ps1
+```
+
+To recreate the desktop shortcut:
+
+```powershell
+cd D:\UVB-KnightBot-Export
+.\scripts\create-desktop-shortcut.ps1
+```
+
+The shortcut opens UVB at `http://localhost:3010` and starts the Telegram worker unless `-SkipTelegram` is used.
+
+## Telegram Bridge
+
+Telegram secrets stay in `.env.local`, which is intentionally ignored by git. Use `.env.example` as the safe template.
+
+```powershell
+cd D:\UVB-KnightBot-Export
+notepad .env.local
+```
+
+Required values:
+
+- `TELEGRAM_BOT_TOKEN`: token from BotFather.
+- `TELEGRAM_ALLOWED_CHAT_ID`: the personal chat ID allowed to control UVB.
+- `UVB_PUBLIC_URL`: usually `http://127.0.0.1:3010` for local polling.
+
+Run only the Telegram worker:
+
+```powershell
+cd D:\UVB-KnightBot-Export
+bun run telegram
+```
+
 ## Features
 
 ### KnightBot Chat
-- Multi-modal input: text, voice, image, video
+- Multi-modal input: text, local voice transcription, staged image/video/file attachments
 - Thread-based conversation management with auto-naming
-- Context-aware responses matched to topic keywords
+- OpenAI-compatible model bridge with configurable backend
 - Typing indicators, message actions (copy, regenerate, bookmark)
-- Voice recording with real-time visualizer
+- Kokoro spoken replies with configurable voice and volume
 
 ### Voice Analysis
 - Real-time recording and file upload (WAV, MP3, FLAC, OGG, M4A)
