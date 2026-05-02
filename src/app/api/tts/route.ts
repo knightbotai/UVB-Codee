@@ -9,6 +9,18 @@ interface TtsRequestBody {
   voice?: string;
 }
 
+function sanitizeTextForSpeech(text: string) {
+  return text
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/#{2,}/g, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function POST(request: NextRequest) {
   let body: TtsRequestBody;
 
@@ -18,7 +30,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const text = body.text?.trim();
+  const text = sanitizeTextForSpeech(body.text ?? "");
   if (!text) {
     return NextResponse.json({ error: "Text is required." }, { status: 400 });
   }

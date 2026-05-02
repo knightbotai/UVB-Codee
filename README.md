@@ -26,7 +26,7 @@ UVB is now wired for the local KnightBot stack:
 - The top-right health badge checks LLM, STT, TTS, Qdrant, and reranker services.
 - Settings can export/import the UVB model and voice profile for quick recovery by another agent.
 - Runtime model/voice defaults are saved under ignored `.uvb/` files so local workers can share the dashboard configuration.
-- A local realtime voice-agent sidecar is staged at `ws://127.0.0.1:8765/live` for the Pipecat-first / LiveKit-later path.
+- A local realtime voice-agent sidecar is staged at `ws://127.0.0.1:8765/live` for the Pipecat v1 / SmallWebRTC-first / LiveKit-later path.
 
 ## Fast Local Launch
 
@@ -74,10 +74,11 @@ Optional Pipecat runtime install:
 .\services\voice-agent\install.ps1 -WithPipecat
 ```
 
-The current sidecar mode is `baseline-websocket`: it uses the working Faster
-Whisper, vLLM, and Kokoro services today while preserving a stable contract for
-Pipecat, Parakeet Realtime EOU, Chatterbox Turbo, VibeVoice-Realtime, and
-LiveKit transport upgrades.
+The current sidecar mode is `baseline-websocket-pipecat-v1-ready`: it uses the
+working Faster Whisper, vLLM, and Kokoro services today while preserving a
+stable contract for Pipecat v1, SmallWebRTC, Parakeet Realtime EOU,
+MOSS-TTS-Nano, MOSS-TTSD, Chatterbox Turbo, VibeVoice-Realtime, and LiveKit
+transport upgrades.
 
 ## Telegram Bridge
 
@@ -140,7 +141,7 @@ bun run telegram
 ### Settings
 - **Profile**: display name, email, password management
 - **Voice & Audio**: TTS/STT engine selection, speech rate, barge-in toggle
-- **Live Voice**: sidecar URL, transport, VAD, STT/TTS provider slots, voice profile, and voice identity prompt
+- **Live Voice**: sidecar URL, Pipecat/SmallWebRTC transport staging, VAD, STT/TTS provider slots, MOSS candidate endpoints, voice profile, and voice identity prompt
 - **Appearance**: theme (Galaxy Dark, Deep Space, Neon Night), accent colors, particle effects
 - **AI Settings**: model backend (LM Studio/Ollama/API), context window, temperature, CoT, RAG
 - **Security**: local-only data, AES-256 encryption, auto-save, telemetry toggle

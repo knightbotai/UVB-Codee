@@ -35,6 +35,12 @@ function generateId() {
   return Math.random().toString(36).substring(2, 11);
 }
 
+const LIVE_VOICE_MIN_RMS_THRESHOLD = 0.022;
+const LIVE_VOICE_MIN_RMS_DELTA = 0.014;
+const LIVE_VOICE_NOISE_MULTIPLIER = 2.1;
+const LIVE_VOICE_SILENCE_MS = 950;
+const LIVE_VOICE_MIN_TURN_MS = 500;
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -62,6 +68,18 @@ function formatMicrophoneError(error: unknown) {
     "Allow microphone access for localhost:3010 in the browser/site permissions, then refresh UVB and press the mic again.",
     "If no prompt appears, use the browser address-bar permissions icon or app settings to reset microphone access.",
   ].join(" ");
+}
+
+function sanitizeTextForSpeech(text: string) {
+  return text
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/#{2,}/g, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function getResponseForInput(input: string): string {
@@ -205,12 +223,20 @@ export default function ChatInterface() {
   const [liveVoiceEnabled, setLiveVoiceEnabled] = useState(false);
   const [liveVoiceConnected, setLiveVoiceConnected] = useState(false);
   const [liveVoiceRecording, setLiveVoiceRecording] = useState(false);
+  const [liveVoicePhase, setLiveVoicePhase] = useState<
+    "idle" | "listening" | "processing" | "speaking"
+  >("idle");
+  const [liveVadDebug, setLiveVadDebug] = useState({ level: 0, threshold: 0, floor: 0 });
   const [liveTranscript, setLiveTranscript] = useState("");
   const [liveMetrics, setLiveMetrics] = useState<{
     sttMs?: number;
     llmMs?: number;
     ttsMs?: number;
     totalMs?: number;
+    sttProvider?: string;
+    ttsProvider?: string;
+    vadProvider?: string;
+    transport?: string;
   } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -219,6 +245,15 @@ export default function ChatInterface() {
   const liveSocketRef = useRef<WebSocket | null>(null);
   const liveRecorderRef = useRef<MediaRecorder | null>(null);
   const liveStreamRef = useRef<MediaStream | null>(null);
+  const liveVoiceEnabledRef = useRef(false);
+  const liveTurnStateRef = useRef<"idle" | "listening" | "processing" | "speaking">("idle");
+  const liveCaptureArmedRef = useRef(false);
+  const liveSpeechStartedRef = useRef(false);
+  const liveSpeechStartedAtRef = useRef(0);
+  const liveLastVoiceAtRef = useRef(0);
+  const liveAutoStopInFlightRef = useRef(false);
+  const liveNoiseFloorRef = useRef(0.01);
+  const liveLastVadUiAtRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const voiceFrameRef = useRef<number | null>(null);
@@ -229,6 +264,10 @@ export default function ChatInterface() {
   const chatAbortRef = useRef<AbortController | null>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+
+  useEffect(() => {
+    liveVoiceEnabledRef.current = liveVoiceEnabled;
+  }, [liveVoiceEnabled]);
 
   useEffect(() => {
     const refreshConfig = () => {
@@ -371,6 +410,10 @@ export default function ChatInterface() {
     setIsSpeaking(false);
     setIsSpeechPaused(false);
     setSpeechProgress(0);
+    if (liveVoiceEnabledRef.current && liveTurnStateRef.current === "speaking") {
+      liveTurnStateRef.current = "idle";
+      setLiveVoicePhase("idle");
+    }
     setActivityStatus("Speech stopped.");
   };
 
@@ -387,15 +430,89 @@ export default function ChatInterface() {
     setSpeechProgress(value);
   };
 
-  const speakText = async (text: string) => {
-    if (!voiceSettings.autoSpeak || !text.trim()) return;
+  const finishLiveVoiceTurn = async (reason: "manual" | "silence" = "manual") => {
+    if (
+      liveAutoStopInFlightRef.current ||
+      !liveSpeechStartedRef.current ||
+      liveSocketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    liveAutoStopInFlightRef.current = true;
+    liveSpeechStartedRef.current = false;
+    liveTurnStateRef.current = "processing";
+    setLiveVoicePhase("processing");
+    setLiveVoiceRecording(false);
+    setActivityStatus(
+      reason === "silence"
+        ? "Detected a lull. Sending that turn to Sophia..."
+        : "Processing live voice turn..."
+    );
+
+    liveRecorderRef.current?.requestData();
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+    liveCaptureArmedRef.current = false;
+
+    if (liveSocketRef.current?.readyState === WebSocket.OPEN) {
+      liveSocketRef.current.send(JSON.stringify({ type: "stop", reason }));
+    }
+
+    liveAutoStopInFlightRef.current = false;
+  };
+
+  const handleLiveVoiceEnergy = (energy: number, threshold: number) => {
+    if (!liveVoiceEnabledRef.current || liveSocketRef.current?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const now = performance.now();
+    const userIsSpeaking = energy >= threshold;
+
+    if (userIsSpeaking && liveTurnStateRef.current === "speaking") {
+      audioPlayerRef.current?.pause();
+      if (audioPlayerRef.current) audioPlayerRef.current.currentTime = 0;
+      setIsSpeaking(false);
+      setIsSpeechPaused(false);
+      setSpeechProgress(0);
+      liveTurnStateRef.current = "listening";
+      setLiveVoicePhase("listening");
+      setActivityStatus("Barge-in detected. Listening to you...");
+    }
+
+    if (userIsSpeaking) {
+      if (!liveSpeechStartedRef.current) {
+        liveCaptureArmedRef.current = true;
+        liveSpeechStartedRef.current = true;
+        liveSpeechStartedAtRef.current = now;
+        liveTurnStateRef.current = "listening";
+        setLiveVoicePhase("listening");
+        setLiveVoiceRecording(true);
+        setActivityStatus("Voice detected. Pause briefly and I’ll send the turn.");
+      }
+      liveLastVoiceAtRef.current = now;
+      return;
+    }
+
+    if (!liveSpeechStartedRef.current) return;
+
+    const quietFor = now - liveLastVoiceAtRef.current;
+    const turnLength = now - liveSpeechStartedAtRef.current;
+    if (quietFor >= LIVE_VOICE_SILENCE_MS && turnLength >= LIVE_VOICE_MIN_TURN_MS) {
+      void finishLiveVoiceTurn("silence");
+    }
+  };
+
+  const speakText = async (text: string, options: { force?: boolean } = {}) => {
+    const speechText = sanitizeTextForSpeech(text);
+    if ((!options.force && !voiceSettings.autoSpeak) || !speechText) return;
 
     setActivityStatus("Speaking with Kokoro...");
     const response = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        text,
+        text: speechText,
         endpoint: voiceSettings.ttsUrl,
         voice: voiceSettings.ttsVoice,
       }),
@@ -417,6 +534,8 @@ export default function ChatInterface() {
     audioPlayerRef.current.src = audioUrl;
     audioPlayerRef.current.volume = voiceSettings.volume;
     audioPlayerRef.current.onplay = () => {
+      liveTurnStateRef.current = liveVoiceEnabledRef.current ? "speaking" : liveTurnStateRef.current;
+      if (liveVoiceEnabledRef.current) setLiveVoicePhase("speaking");
       setIsSpeaking(true);
       setIsSpeechPaused(false);
       setHasSpeechReady(true);
@@ -439,6 +558,13 @@ export default function ChatInterface() {
       setActivityStatus("Ready.");
     };
     await audioPlayerRef.current.play();
+  };
+
+  const replayMessageSpeech = async (text: string) => {
+    await speakText(text, { force: true }).catch((error) => {
+      const message = error instanceof Error ? error.message : "TTS failed.";
+      setActivityStatus(message);
+    });
   };
 
   const sendMessageWithText = async (userInput: string, messageType: ChatMessage["type"] = "text") => {
@@ -574,23 +700,56 @@ export default function ChatInterface() {
     const analyser = audioContext.createAnalyser();
     const source = audioContext.createMediaStreamSource(stream);
     analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.6;
     source.connect(analyser);
 
     audioContextRef.current = audioContext;
     analyserRef.current = analyser;
 
-    const buffer = new Uint8Array(analyser.frequencyBinCount);
+    const frequencyBuffer = new Uint8Array(analyser.frequencyBinCount);
+    const timeBuffer = new Uint8Array(analyser.fftSize);
 
     const tick = () => {
-      analyser.getByteFrequencyData(buffer);
-      const bucketSize = Math.max(1, Math.floor(buffer.length / 32));
+      analyser.getByteFrequencyData(frequencyBuffer);
+      analyser.getByteTimeDomainData(timeBuffer);
+
+      let sumSquares = 0;
+      for (const value of timeBuffer) {
+        const normalized = (value - 128) / 128;
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / Math.max(1, timeBuffer.length));
+      const currentFloor = liveNoiseFloorRef.current;
+      const threshold = Math.max(
+        LIVE_VOICE_MIN_RMS_THRESHOLD,
+        currentFloor + LIVE_VOICE_MIN_RMS_DELTA,
+        currentFloor * LIVE_VOICE_NOISE_MULTIPLIER
+      );
+      const looksLikeSpeech = rms >= threshold;
+
+      if (!looksLikeSpeech && !liveSpeechStartedRef.current && liveTurnStateRef.current === "idle") {
+        liveNoiseFloorRef.current = currentFloor * 0.96 + rms * 0.04;
+      }
+
+      const now = performance.now();
+      if (liveVoiceEnabledRef.current && now - liveLastVadUiAtRef.current > 250) {
+        liveLastVadUiAtRef.current = now;
+        setLiveVadDebug({
+          level: rms,
+          threshold,
+          floor: liveNoiseFloorRef.current,
+        });
+      }
+
+      const bucketSize = Math.max(1, Math.floor(frequencyBuffer.length / 32));
       const nextLevels = Array.from({ length: 32 }, (_, index) => {
         const start = index * bucketSize;
-        const slice = buffer.slice(start, start + bucketSize);
+        const slice = frequencyBuffer.slice(start, start + bucketSize);
         const average = slice.reduce((sum, value) => sum + value, 0) / Math.max(1, slice.length);
         return Math.max(0.04, Math.min(1, average / 180));
       });
       setVoiceLevels(nextLevels);
+      handleLiveVoiceEnergy(rms, threshold);
       voiceFrameRef.current = requestAnimationFrame(tick);
     };
 
@@ -744,7 +903,15 @@ export default function ChatInterface() {
       setIsSpeaking(false);
       setIsSpeechPaused(false);
       setSpeechProgress(0);
-      setActivityStatus("Live voice ready.");
+      if (liveTurnStateRef.current === "speaking") {
+        liveTurnStateRef.current = "idle";
+      }
+      if (liveVoiceEnabledRef.current) setLiveVoicePhase("idle");
+      setActivityStatus(
+        liveVoiceEnabledRef.current
+          ? "Live voice ready. Start talking when you want the next turn."
+          : "Live voice ready."
+      );
     };
     await audioPlayerRef.current.play();
   };
@@ -760,11 +927,23 @@ export default function ChatInterface() {
       llmMs?: number;
       ttsMs?: number;
       totalMs?: number;
+      sttProvider?: string;
+      ttsProvider?: string;
+      vadProvider?: string;
+      transport?: string;
+      pipelineMode?: string;
+      pipecatInstalled?: boolean;
     };
 
     if (data.type === "ready") {
       setLiveVoiceConnected(true);
-      setActivityStatus(data.message ?? "Live voice connected.");
+      setActivityStatus(
+        data.pipelineMode
+          ? `${data.message ?? "Live voice connected."} ${data.pipelineMode}${
+              data.pipecatInstalled ? " with Pipecat installed." : " with baseline providers."
+            }`
+          : data.message ?? "Live voice connected."
+      );
       return;
     }
 
@@ -809,12 +988,22 @@ export default function ChatInterface() {
         llmMs: data.llmMs,
         ttsMs: data.ttsMs,
         totalMs: data.totalMs,
+        sttProvider: data.sttProvider,
+        ttsProvider: data.ttsProvider,
+        vadProvider: data.vadProvider,
+        transport: data.transport,
       });
       setActivityStatus(
         `Live turn complete: STT ${data.sttMs ?? "-"}ms | LLM ${
           data.llmMs ?? "-"
-        }ms | TTS ${data.ttsMs ?? "-"}ms`
+        }ms | TTS ${data.ttsMs ?? "-"}ms via ${
+          data.ttsProvider ?? voiceSettings.liveTtsProvider
+        }`
       );
+      if (liveTurnStateRef.current !== "speaking") {
+        liveTurnStateRef.current = "idle";
+        setLiveVoicePhase("idle");
+      }
       return;
     }
 
@@ -848,7 +1037,11 @@ export default function ChatInterface() {
         })
       );
       setLiveVoiceConnected(true);
-      setActivityStatus("Live voice connected. Listening...");
+      liveTurnStateRef.current = "idle";
+      setLiveVoicePhase("idle");
+      liveCaptureArmedRef.current = false;
+      liveSpeechStartedRef.current = false;
+      setActivityStatus("Live voice connected. Start talking and I’ll auto-send after a lull.");
     };
 
     socket.onmessage = (event) => {
@@ -868,19 +1061,33 @@ export default function ChatInterface() {
     const recorder = new MediaRecorder(stream);
     liveRecorderRef.current = recorder;
     recorder.ondataavailable = (event) => {
-      if (!event.data.size || socket.readyState !== WebSocket.OPEN) return;
+      if (
+        !event.data.size ||
+        socket.readyState !== WebSocket.OPEN ||
+        !liveCaptureArmedRef.current
+      ) {
+        return;
+      }
       void blobToBase64(event.data).then((data) => {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "audio", data }));
         }
       });
     };
-    recorder.start(500);
+    recorder.start(200);
   };
 
   const startLiveVoice = async () => {
     stopSpeech();
     setLiveVoiceEnabled(true);
+    liveVoiceEnabledRef.current = true;
+    liveTurnStateRef.current = "idle";
+    setLiveVoicePhase("idle");
+    liveNoiseFloorRef.current = 0.01;
+    setLiveVadDebug({ level: 0, threshold: 0, floor: 0 });
+    liveCaptureArmedRef.current = false;
+    liveSpeechStartedRef.current = false;
+    liveAutoStopInFlightRef.current = false;
     setLiveTranscript("");
     setLiveMetrics(null);
     setInputMode("voice");
@@ -891,10 +1098,14 @@ export default function ChatInterface() {
       liveStreamRef.current = stream;
       startVoiceLevelMonitor(stream);
       await connectLiveVoice(stream);
-      setLiveVoiceRecording(true);
+      setLiveVoiceRecording(false);
     } catch (error) {
-      setLiveVoiceEnabled(false);
-      setLiveVoiceConnected(false);
+    setLiveVoiceEnabled(false);
+    liveVoiceEnabledRef.current = false;
+    liveTurnStateRef.current = "idle";
+    setLiveVoicePhase("idle");
+    setLiveVadDebug({ level: 0, threshold: 0, floor: 0 });
+    setLiveVoiceConnected(false);
       setLiveVoiceRecording(false);
       await stopVoiceLevelMonitor();
       setActivityStatus(formatMicrophoneError(error));
@@ -902,17 +1113,7 @@ export default function ChatInterface() {
   };
 
   const stopLiveVoiceTurn = async () => {
-    liveRecorderRef.current?.stop();
-    liveRecorderRef.current = null;
-    liveStreamRef.current?.getTracks().forEach((track) => track.stop());
-    liveStreamRef.current = null;
-    setLiveVoiceRecording(false);
-    await stopVoiceLevelMonitor();
-
-    if (liveSocketRef.current?.readyState === WebSocket.OPEN) {
-      liveSocketRef.current.send(JSON.stringify({ type: "stop" }));
-      setActivityStatus("Processing live voice turn...");
-    }
+    await finishLiveVoiceTurn("manual");
   };
 
   const cancelLiveVoice = async () => {
@@ -926,6 +1127,13 @@ export default function ChatInterface() {
     liveSocketRef.current?.close();
     liveSocketRef.current = null;
     setLiveVoiceEnabled(false);
+    liveVoiceEnabledRef.current = false;
+    liveTurnStateRef.current = "idle";
+    setLiveVoicePhase("idle");
+    setLiveVadDebug({ level: 0, threshold: 0, floor: 0 });
+    liveCaptureArmedRef.current = false;
+    liveSpeechStartedRef.current = false;
+    liveAutoStopInFlightRef.current = false;
     setLiveVoiceConnected(false);
     setLiveVoiceRecording(false);
     setLiveTranscript("");
@@ -966,6 +1174,65 @@ export default function ChatInterface() {
     fileInputRef.current.accept = accept;
     fileInputRef.current.click();
   };
+
+  const speechControls = hasSpeechReady ? (
+    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-uvb-steel-blue/30 bg-uvb-matte-black/70 px-3 py-2 shadow-lg shadow-black/20 backdrop-blur">
+      <span className="text-xs font-medium text-uvb-text-secondary">
+        Spoken reply
+      </span>
+      <div className="flex items-center gap-1">
+        {isSpeechPaused || !isSpeaking ? (
+          <button
+            onClick={resumeSpeech}
+            title="Resume spoken reply"
+            aria-label="Resume spoken reply"
+            className="rounded-lg border border-uvb-neon-green/30 bg-uvb-neon-green/10 p-1.5 text-uvb-neon-green hover:bg-uvb-neon-green/20"
+          >
+            <PlayIcon className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            onClick={pauseSpeech}
+            title="Pause spoken reply"
+            aria-label="Pause spoken reply"
+            className="rounded-lg border border-uvb-border/40 p-1.5 text-uvb-text-secondary hover:bg-uvb-light-gray/30"
+          >
+            <PauseIcon className="h-4 w-4" />
+          </button>
+        )}
+        <button
+          onClick={replaySpeech}
+          title="Replay spoken reply from the beginning"
+          aria-label="Replay spoken reply"
+          className="rounded-lg border border-uvb-accent-yellow/30 p-1.5 text-uvb-accent-yellow hover:bg-uvb-accent-yellow/10"
+        >
+          <ArrowPathIcon className="h-4 w-4" />
+        </button>
+        <button
+          onClick={stopSpeech}
+          title="Stop spoken reply"
+          aria-label="Stop spoken reply"
+          className="rounded-lg border border-red-400/30 p-1.5 text-red-300 hover:bg-red-500/10"
+        >
+          <SpeakerXMarkIcon className="h-4 w-4" />
+        </button>
+      </div>
+      <input
+        type="range"
+        min="0"
+        max={speechDuration || 1}
+        step="0.1"
+        value={Math.min(speechProgress, speechDuration || 1)}
+        onChange={(event) => seekSpeech(Number(event.target.value))}
+        title="Seek spoken reply"
+        aria-label="Seek spoken reply"
+        className="min-w-40 flex-1 accent-uvb-neon-green"
+      />
+      <span className="text-[11px] text-uvb-text-muted">
+        {Math.floor(speechProgress)}s / {Math.floor(speechDuration || 0)}s
+      </span>
+    </div>
+  ) : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -1061,8 +1328,16 @@ export default function ChatInterface() {
                   : "Live voice"}
               </button>
               {liveMetrics && (
-                <span className="rounded-full border border-uvb-steel-blue/30 px-2 py-0.5 text-uvb-text-muted">
-                  {liveMetrics.totalMs ?? "-"}ms turn
+                <span
+                  className="rounded-full border border-uvb-steel-blue/30 px-2 py-0.5 text-uvb-text-muted"
+                  title={`Transport: ${liveMetrics.transport ?? voiceSettings.liveTransport} | STT: ${
+                    liveMetrics.sttProvider ?? voiceSettings.liveSttProvider
+                  } | TTS: ${liveMetrics.ttsProvider ?? voiceSettings.liveTtsProvider} | VAD: ${
+                    liveMetrics.vadProvider ?? voiceSettings.liveVadProvider
+                  }`}
+                >
+                  {liveMetrics.totalMs ?? "-"}ms turn ·{" "}
+                  {liveMetrics.ttsProvider ?? voiceSettings.liveTtsProvider}
                 </span>
               )}
               {voiceSettings.autoSpeak && (
@@ -1087,56 +1362,6 @@ export default function ChatInterface() {
                 >
                   Stop response
                 </button>
-              )}
-              {hasSpeechReady && (
-                <div className="flex items-center gap-1 rounded-full border border-uvb-steel-blue/40 px-1.5 py-0.5">
-                  {isSpeechPaused ? (
-                    <button
-                      onClick={resumeSpeech}
-                      title="Resume spoken reply"
-                      aria-label="Resume spoken reply"
-                      className="rounded-full p-0.5 text-uvb-neon-green hover:bg-uvb-light-gray/40"
-                    >
-                      <PlayIcon className="h-3 w-3" />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={pauseSpeech}
-                      title="Pause spoken reply"
-                      aria-label="Pause spoken reply"
-                      className="rounded-full p-0.5 text-uvb-text-secondary hover:bg-uvb-light-gray/40"
-                    >
-                      <PauseIcon className="h-3 w-3" />
-                    </button>
-                  )}
-                  <button
-                    onClick={replaySpeech}
-                    title="Replay spoken reply from the beginning"
-                    aria-label="Replay spoken reply"
-                    className="rounded-full p-0.5 text-uvb-accent-yellow hover:bg-uvb-light-gray/40"
-                  >
-                    <ArrowPathIcon className="h-3 w-3" />
-                  </button>
-                  <input
-                    type="range"
-                    min="0"
-                    max={speechDuration || 1}
-                    step="0.1"
-                    value={Math.min(speechProgress, speechDuration || 1)}
-                    onChange={(event) => seekSpeech(Number(event.target.value))}
-                    title="Seek spoken reply"
-                    aria-label="Seek spoken reply"
-                    className="w-24 accent-uvb-neon-green"
-                  />
-                  <button
-                    onClick={stopSpeech}
-                    title="Stop spoken reply"
-                    aria-label="Stop spoken reply"
-                    className="rounded-full p-0.5 text-red-300 hover:bg-red-500/10"
-                  >
-                    <SpeakerXMarkIcon className="h-3 w-3" />
-                  </button>
-                </div>
               )}
             </div>
           </div>
@@ -1220,6 +1445,14 @@ export default function ChatInterface() {
                         {msg.role === "assistant" && (
                           <div className="flex gap-1">
                             <button
+                              onClick={() => replayMessageSpeech(msg.content)}
+                              title="Play this response"
+                              aria-label="Play this response"
+                              className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-neon-green transition-colors"
+                            >
+                              <PlayIcon className="w-3 h-3" />
+                            </button>
+                            <button
                               onClick={() => copyText(msg.content)}
                               title="Copy response"
                               aria-label="Copy response"
@@ -1302,6 +1535,7 @@ export default function ChatInterface() {
 
           {/* Input area */}
           <div className="p-4 border-t border-uvb-border/40">
+            {speechControls}
             {(isRecording || isTranscribing || liveVoiceEnabled) && (
               <div className="mb-3 flex items-center gap-3 p-3 rounded-lg bg-uvb-deep-teal/20 border border-uvb-neon-green/20">
                 <div
@@ -1311,9 +1545,13 @@ export default function ChatInterface() {
                 />
                 <span className="text-sm text-uvb-text-secondary">
                   {liveVoiceEnabled
-                    ? liveVoiceRecording
+                    ? liveVoicePhase === "listening"
                       ? "Live voice listening..."
-                      : "Live voice processing..."
+                      : liveVoicePhase === "processing"
+                      ? "Live voice processing..."
+                      : liveVoicePhase === "speaking"
+                      ? "Sophia is speaking. Start talking to barge in."
+                      : "Live voice armed. Start talking."
                     : isTranscribing
                     ? "Transcribing..."
                     : "Recording..."}
@@ -1330,11 +1568,11 @@ export default function ChatInterface() {
                       {liveVoiceRecording && (
                         <button
                           onClick={stopLiveVoiceTurn}
-                          title="Stop listening and send this live voice turn to the sidecar"
+                          title="Force-send this live voice turn now"
                           aria-label="Stop live voice and answer"
                           className="rounded-lg border border-uvb-neon-green/30 bg-uvb-neon-green/10 px-3 py-1.5 text-xs text-uvb-neon-green hover:bg-uvb-neon-green/20"
                         >
-                          Stop & answer
+                          Send turn now
                         </button>
                       )}
                       <button

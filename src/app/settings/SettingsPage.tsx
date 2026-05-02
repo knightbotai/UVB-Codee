@@ -470,6 +470,7 @@ export default function SettingsPage() {
                             }
                           >
                             <option value="websocket">WebSocket local first</option>
+                            <option value="small-webrtc">Pipecat SmallWebRTC next</option>
                             <option value="webrtc">WebRTC staged</option>
                             <option value="livekit">LiveKit later</option>
                           </select>
@@ -529,10 +530,65 @@ export default function SettingsPage() {
                             }
                           >
                             <option value="kokoro">Kokoro fallback</option>
+                            <option value="moss-tts-nano">MOSS-TTS-Nano candidate</option>
+                            <option value="moss-ttsd">MOSS-TTSD expressive candidate</option>
                             <option value="chatterbox-turbo">Chatterbox Turbo staged</option>
                             <option value="vibevoice-realtime">VibeVoice Realtime staged</option>
                             <option value="custom">Custom provider</option>
                           </select>
+                        </div>
+                        {(voiceSettings.liveTtsProvider === "moss-tts-nano" ||
+                          voiceSettings.liveTtsProvider === "moss-ttsd") && (
+                          <>
+                            <div className="col-span-2 rounded-lg border border-uvb-steel-blue/20 bg-uvb-steel-blue/10 p-3">
+                              <p className="text-xs font-semibold text-uvb-text-primary">
+                                MOSS TTS provider slot
+                              </p>
+                              <p className="mt-1 text-[11px] leading-relaxed text-uvb-text-muted">
+                                UVB will treat MOSS like an OpenAI-compatible speech endpoint
+                                while we evaluate the runtime. Use Nano for the realtime candidate
+                                and TTSD for expressive/dialogue experiments.
+                              </p>
+                            </div>
+                            <div>
+                              <label className="text-xs text-uvb-text-muted block mb-1.5">
+                                MOSS TTS Endpoint
+                              </label>
+                              <input
+                                type="url"
+                                value={voiceSettings.mossTtsUrl}
+                                onChange={(event) =>
+                                  updateVoiceSettings({ mossTtsUrl: event.target.value })
+                                }
+                                className="input-field"
+                                placeholder="http://127.0.0.1:8890/v1/audio/speech"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-uvb-text-muted block mb-1.5">
+                                MOSS Voice / Profile
+                              </label>
+                              <input
+                                type="text"
+                                value={voiceSettings.mossTtsVoice}
+                                onChange={(event) =>
+                                  updateVoiceSettings({ mossTtsVoice: event.target.value })
+                                }
+                                className="input-field"
+                                placeholder="default"
+                              />
+                            </div>
+                          </>
+                        )}
+                        <div className="col-span-2 rounded-lg border border-uvb-neon-green/10 bg-uvb-matte-black/30 p-3">
+                          <p className="text-xs font-semibold text-uvb-neon-green">
+                            Latest realtime path
+                          </p>
+                          <p className="mt-1 text-[11px] leading-relaxed text-uvb-text-muted">
+                            Keep WebSocket for the working baseline. Next landing zone:
+                            Pipecat v1 sidecar with SmallWebRTC transport, then LiveKit
+                            only when we need remote/mobile/multi-device routing.
+                          </p>
                         </div>
                         <div className="col-span-2">
                           <label className="text-xs text-uvb-text-muted block mb-1.5">

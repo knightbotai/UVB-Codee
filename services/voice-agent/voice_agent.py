@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import tempfile
 import time
 import importlib.util
@@ -37,6 +38,9 @@ DEFAULT_VOICE_SETTINGS = {
     "liveSttProvider": "faster-whisper",
     "liveTtsProvider": "kokoro",
     "liveVadProvider": "browser-manual",
+    "liveTransport": "websocket",
+    "mossTtsUrl": os.getenv("UVB_MOSS_TTS_URL", "http://127.0.0.1:8890/v1/audio/speech"),
+    "mossTtsVoice": os.getenv("UVB_MOSS_TTS_VOICE", "default"),
     "systemPrompt": (
         "You are KnightBot inside UVB, a local multimodal AI workspace. Be direct, "
         "useful, warm, and concise. You are speaking through the realtime voice "
@@ -62,6 +66,17 @@ def shallow_settings(defaults: dict[str, Any], incoming: dict[str, Any] | None) 
     if incoming:
         merged.update({k: v for k, v in incoming.items() if v is not None})
     return merged
+
+
+def sanitize_text_for_speech(text: str) -> str:
+    cleaned = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)
+    cleaned = re.sub(r"#{2,}", "", cleaned)
+    cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"__(.*?)__", r"\1", cleaned)
+    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+    cleaned = re.sub(r"(?m)^\s*[-*+]\s+", "", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 @dataclass
@@ -174,16 +189,38 @@ async def complete_chat(
             return content, now_ms() - started
 
 
-async def synthesize_speech(text: str, voice_settings: dict[str, Any]) -> tuple[bytes, int]:
-    started = now_ms()
+def resolve_tts_settings(voice_settings: dict[str, Any]) -> tuple[str, str, str]:
+    provider = str(voice_settings.get("liveTtsProvider") or "kokoro")
+    if provider in {"moss-tts-nano", "moss-ttsd"}:
+        endpoint = str(
+            voice_settings.get("mossTtsUrl")
+            or os.getenv("UVB_MOSS_TTS_URL")
+            or DEFAULT_VOICE_SETTINGS["mossTtsUrl"]
+        )
+        voice = str(
+            voice_settings.get("mossTtsVoice")
+            or os.getenv("UVB_MOSS_TTS_VOICE")
+            or DEFAULT_VOICE_SETTINGS["mossTtsVoice"]
+        )
+        return endpoint, voice, provider
+
     endpoint = str(voice_settings.get("ttsUrl") or DEFAULT_VOICE_SETTINGS["ttsUrl"])
     voice = str(voice_settings.get("ttsVoice") or DEFAULT_VOICE_SETTINGS["ttsVoice"])
+    return endpoint, voice, provider
+
+
+async def synthesize_speech(text: str, voice_settings: dict[str, Any]) -> tuple[bytes, int, str]:
+    started = now_ms()
+    endpoint, voice, provider = resolve_tts_settings(voice_settings)
+    payload = {"input": sanitize_text_for_speech(text), "voice": voice}
+    if provider.startswith("moss-"):
+        payload["response_format"] = "mp3"
 
     async with aiohttp.ClientSession() as client:
         async with client.post(
             endpoint,
             headers={"Content-Type": "application/json"},
-            json={"input": text, "voice": voice},
+            json=payload,
             timeout=180,
         ) as response:
             body = await response.read()
@@ -191,7 +228,10 @@ async def synthesize_speech(text: str, voice_settings: dict[str, Any]) -> tuple[
                 raise RuntimeError(
                     f"TTS returned {response.status}: {body.decode(errors='ignore')}"
                 )
-            return body, now_ms() - started
+            content_type = response.headers.get("content-type") or (
+                "audio/mpeg" if provider.startswith("moss-") else "audio/wav"
+            )
+            return body, now_ms() - started, content_type
 
 
 async def process_turn(websocket: Any, session_state: VoiceSession) -> None:
@@ -219,11 +259,11 @@ async def process_turn(websocket: Any, session_state: VoiceSession) -> None:
     )
 
     await send_event(websocket, "status", message="Speaking with the configured voice...")
-    audio, tts_ms = await synthesize_speech(reply, session_state.voice_settings)
+    audio, tts_ms, content_type = await synthesize_speech(reply, session_state.voice_settings)
     await send_event(
         websocket,
         "audio",
-        contentType="audio/wav",
+        contentType=content_type,
         audioBase64=base64.b64encode(audio).decode("ascii"),
         latencyMs=tts_ms,
     )
@@ -237,6 +277,7 @@ async def process_turn(websocket: Any, session_state: VoiceSession) -> None:
         sttProvider=session_state.voice_settings.get("liveSttProvider", "faster-whisper"),
         ttsProvider=session_state.voice_settings.get("liveTtsProvider", "kokoro"),
         vadProvider=session_state.voice_settings.get("liveVadProvider", "browser-manual"),
+        transport=session_state.voice_settings.get("liveTransport", "websocket"),
     )
     await send_event(websocket, "status", message="Live voice turn complete.")
 
@@ -248,11 +289,13 @@ async def handle_live(websocket: Any) -> None:
         "ready",
         message="UVB voice agent connected.",
         transport="websocket",
-        pipelineMode="baseline-websocket",
+        pipelineMode="baseline-websocket-pipecat-v1-ready",
         pipecatInstalled=pipecat_available(),
         upgradePath=[
-            "pipecat-ai transport/pipeline runtime",
+            "pipecat-ai v1 pipeline runtime",
+            "SmallWebRTC transport for local browser voice",
             "Parakeet Realtime EOU STT",
+            "MOSS-TTS-Nano / MOSS-TTSD TTS",
             "Chatterbox Turbo TTS",
             "LiveKit transport",
         ],
@@ -282,7 +325,10 @@ async def handle_live(websocket: Any) -> None:
                 await send_event(
                     websocket,
                     "status",
-                    message="Live voice session armed. Send audio, then stop to process.",
+                    message=(
+                        "Live voice session armed. Browser VAD will send turns "
+                        "automatically after a lull."
+                    ),
                 )
             elif message_type == "audio":
                 audio_base64 = str(message.get("data") or "")

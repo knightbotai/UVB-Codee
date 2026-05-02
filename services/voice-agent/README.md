@@ -11,8 +11,23 @@ uses the existing local providers as the stable baseline:
 - TTS: Kokoro OpenAI-compatible speech endpoint
 
 The sidecar is intentionally provider-shaped so Parakeet Realtime EOU,
-Chatterbox Turbo, VibeVoice-Realtime, Pipecat transports, and LiveKit can be
-added without changing the UVB cockpit surface.
+MOSS-TTS-Nano, MOSS-TTSD, Chatterbox Turbo, VibeVoice-Realtime, Pipecat
+transports, and LiveKit can be added without changing the UVB cockpit surface.
+
+## Current Realtime Direction
+
+The working baseline remains WebSocket because it is already useful locally.
+The next transport target is Pipecat v1 with SmallWebRTC for browser voice.
+LiveKit remains the later remote/mobile/multi-device transport once the local
+loop feels right.
+
+MOSS-TTS is now represented as two provider slots:
+
+- `moss-tts-nano`: realtime/local candidate.
+- `moss-ttsd`: expressive/dialogue and cloning candidate.
+
+Both are treated as OpenAI-compatible `/v1/audio/speech` style providers until
+we install a concrete local runtime.
 
 ## Run
 
