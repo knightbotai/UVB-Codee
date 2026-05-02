@@ -1094,7 +1094,7 @@ export default function ChatInterface() {
   };
 
   const connectPipecatLiveVoice = async () => {
-    const [{ PipecatClient }, { SmallWebRTCTransport }] = await Promise.all([
+    const [{ PipecatClient }, { SmallWebRTCTransport, WavMediaManager }] = await Promise.all([
       import("@pipecat-ai/client-js"),
       import("@pipecat-ai/small-webrtc-transport"),
     ]);
@@ -1133,7 +1133,9 @@ export default function ChatInterface() {
     };
 
     const client = new PipecatClient({
-      transport: new SmallWebRTCTransport(),
+      transport: new SmallWebRTCTransport({
+        mediaManager: new WavMediaManager(200, 16000),
+      }),
       enableMic: true,
       enableCam: false,
       callbacks: {

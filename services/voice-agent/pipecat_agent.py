@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from typing import Any
+import traceback
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -193,21 +194,34 @@ def create_app() -> FastAPI:
         try:
             payload = await request.json()
             model_settings, voice_settings = merge_request_settings(payload)
-            webrtc_request = SmallWebRTCRequest(**payload)
+            webrtc_request = SmallWebRTCRequest(
+                sdp=payload["sdp"],
+                type=payload["type"],
+                pc_id=payload.get("pc_id"),
+                restart_pc=payload.get("restart_pc"),
+                request_data=payload.get("request_data") or payload.get("requestData"),
+            )
             return await request_handler.handle_web_request(
                 webrtc_request,
                 lambda connection: schedule_pipeline(connection, model_settings, voice_settings),
             )
         except Exception as error:
+            print("SmallWebRTC offer failed:", repr(error), flush=True)
+            traceback.print_exc()
             raise HTTPException(status_code=500, detail=str(error)) from error
 
     @app.patch("/api/offer")
     async def patch_offer(request: Request) -> dict[str, Any] | None:
         try:
             payload = await request.json()
-            patch_request = SmallWebRTCPatchRequest(**payload)
+            patch_request = SmallWebRTCPatchRequest(
+                pc_id=payload["pc_id"],
+                candidates=payload.get("candidates") or [],
+            )
             return await request_handler.handle_patch_request(patch_request)
         except Exception as error:
+            print("SmallWebRTC ICE patch failed:", repr(error), flush=True)
+            traceback.print_exc()
             raise HTTPException(status_code=500, detail=str(error)) from error
 
     @app.on_event("shutdown")
