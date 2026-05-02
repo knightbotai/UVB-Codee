@@ -54,6 +54,10 @@ def normalize_base_url(value: str) -> str:
     return value.removesuffix("/audio/transcriptions").removesuffix("/audio/speech")
 
 
+def truthy(value: Any) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def merge_request_settings(payload: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = payload or {}
     request_data = payload.get("requestData") if isinstance(payload.get("requestData"), dict) else {}
@@ -123,11 +127,15 @@ def create_app() -> FastAPI:
     ) -> None:
         model_settings = model_settings or {}
         voice_settings = voice_settings or {}
+        full_pipeline = truthy(
+            voice_settings.get("liveFullPipeline")
+            or os.getenv("UVB_PIPECAT_FULL_PIPELINE", "false")
+        )
         transport = SmallWebRTCTransport(
             webrtc_connection=connection,
             params=TransportParams(
                 audio_in_enabled=True,
-                audio_out_enabled=True,
+                audio_out_enabled=full_pipeline,
                 audio_in_sample_rate=16000,
                 audio_out_sample_rate=24000,
             ),
@@ -140,48 +148,48 @@ def create_app() -> FastAPI:
             ),
             model=str(voice_settings.get("sttModel") or env("UVB_STT_MODEL", "Systran/faster-whisper-large-v3")),
         )
-        llm = OpenAILLMService(
-            api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
-            base_url=normalize_base_url(
-                str(model_settings.get("baseUrl") or env("UVB_LLM_BASE_URL", "http://127.0.0.1:8003/v1"))
-            ),
-            model=str(model_settings.get("model") or env("UVB_LLM_MODEL", "qwen36-35b-a3b-heretic-nvfp4")),
-        )
-        tts = OpenAITTSService(
-            api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
-            base_url=normalize_base_url(
-                str(voice_settings.get("ttsUrl") or env("UVB_TTS_URL", "http://127.0.0.1:8880/v1"))
-            ),
-            model=env("UVB_TTS_MODEL", "tts-1"),
-            voice=str(voice_settings.get("ttsVoice") or env("UVB_TTS_VOICE", "af_nova")),
-        )
-
-        context = LLMContext(
-            messages=[
-                {
-                    "role": "system",
-                    "content": str(
-                        voice_settings.get("systemPrompt")
-                        or env("UVB_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
-                    ),
-                }
-            ]
-        )
-        context_aggregator = LLMContextAggregatorPair(context)
         vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(), audio_idle_timeout=1.0)
+        pipeline_steps = [transport.input(), vad, stt]
 
-        pipeline = Pipeline(
-            [
-                transport.input(),
-                vad,
-                stt,
-                context_aggregator.user(),
-                llm,
-                tts,
-                transport.output(),
-                context_aggregator.assistant(),
-            ]
-        )
+        if full_pipeline:
+            llm = OpenAILLMService(
+                api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
+                base_url=normalize_base_url(
+                    str(model_settings.get("baseUrl") or env("UVB_LLM_BASE_URL", "http://127.0.0.1:8003/v1"))
+                ),
+                model=str(model_settings.get("model") or env("UVB_LLM_MODEL", "qwen36-35b-a3b-heretic-nvfp4")),
+            )
+            tts = OpenAITTSService(
+                api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
+                base_url=normalize_base_url(
+                    str(voice_settings.get("ttsUrl") or env("UVB_TTS_URL", "http://127.0.0.1:8880/v1"))
+                ),
+                model=env("UVB_TTS_MODEL", "tts-1"),
+                voice=str(voice_settings.get("ttsVoice") or env("UVB_TTS_VOICE", "af_nova")),
+            )
+            context = LLMContext(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": str(
+                            voice_settings.get("systemPrompt")
+                            or env("UVB_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+                        ),
+                    }
+                ]
+            )
+            context_aggregator = LLMContextAggregatorPair(context)
+            pipeline_steps.extend(
+                [
+                    context_aggregator.user(),
+                    llm,
+                    tts,
+                    transport.output(),
+                    context_aggregator.assistant(),
+                ]
+            )
+
+        pipeline = Pipeline(pipeline_steps)
         task = PipelineTask(
             pipeline,
             params=PipelineParams(

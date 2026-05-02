@@ -48,6 +48,8 @@ const LIVE_VOICE_MIN_TURN_MS = 500;
 type PipecatClientLike = {
   connect: (params?: unknown) => Promise<unknown>;
   disconnect: () => Promise<void>;
+  enableMic: (enable: boolean) => void;
+  tracks: () => { local?: { audio?: MediaStreamTrack } };
 };
 
 type PipecatTranscriptData = {
@@ -243,6 +245,7 @@ export default function ChatInterface() {
   const [liveVoiceEnabled, setLiveVoiceEnabled] = useState(false);
   const [liveVoiceConnected, setLiveVoiceConnected] = useState(false);
   const [liveVoiceRecording, setLiveVoiceRecording] = useState(false);
+  const [liveMicMuted, setLiveMicMuted] = useState(false);
   const [liveVoicePhase, setLiveVoicePhase] = useState<
     "idle" | "listening" | "processing" | "speaking"
   >("idle");
@@ -281,6 +284,8 @@ export default function ChatInterface() {
   const pipecatFallbackTimerRef = useRef<number | null>(null);
   const pipecatFallbackInFlightRef = useRef(false);
   const pipecatPendingTranscriptRef = useRef("");
+  const liveUserSpeakingRef = useRef(false);
+  const liveMicMutedRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const voiceFrameRef = useRef<number | null>(null);
@@ -494,6 +499,7 @@ export default function ChatInterface() {
   const finishLiveVoiceTurn = async (reason: "manual" | "silence" = "manual") => {
     if (
       liveAutoStopInFlightRef.current ||
+      liveMicMutedRef.current ||
       !liveSpeechStartedRef.current ||
       liveSocketRef.current?.readyState !== WebSocket.OPEN
     ) {
@@ -523,7 +529,11 @@ export default function ChatInterface() {
   };
 
   const handleLiveVoiceEnergy = (energy: number, threshold: number) => {
-    if (!liveVoiceEnabledRef.current || liveSocketRef.current?.readyState !== WebSocket.OPEN) {
+    if (
+      !liveVoiceEnabledRef.current ||
+      liveMicMutedRef.current ||
+      liveSocketRef.current?.readyState !== WebSocket.OPEN
+    ) {
       return;
     }
 
@@ -719,7 +729,7 @@ export default function ChatInterface() {
     pipecatFallbackTimerRef.current = null;
   };
 
-  const generateLiveVoiceFallbackResponse = async (threadId: string, transcript: string) => {
+  const generateLiveVoiceResponse = async (threadId: string, transcript: string) => {
     const cleanTranscript = transcript.trim();
     if (!cleanTranscript || pipecatFallbackInFlightRef.current) return;
 
@@ -727,7 +737,7 @@ export default function ChatInterface() {
     setIsTyping(true);
     liveTurnStateRef.current = "processing";
     setLiveVoicePhase("processing");
-    setActivityStatus("Pipecat heard you. Asking the UVB chat bridge for the reply...");
+    setActivityStatus("Heard you. Asking the fast UVB chat bridge...");
 
     try {
       const currentThread = useAppStore.getState().threads.find((thread) => thread.id === threadId);
@@ -750,10 +760,21 @@ export default function ChatInterface() {
 
       const currentModelSettings = loadModelSettings();
       const currentVoiceSettings = loadVoiceSettings();
+      const liveModelSettings = {
+        ...currentModelSettings,
+        maxTokens: Math.min(currentModelSettings.maxTokens, 160),
+        temperature: Math.min(currentModelSettings.temperature, 0.45),
+      };
+      const liveSystemPrompt = [
+        currentVoiceSettings.systemPrompt,
+        "Live voice response mode: answer in one or two short spoken sentences. No markdown, no lists, no headings unless the user explicitly asks.",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       const response = await sendChatToModel(
         priorMessages,
-        currentModelSettings,
-        currentVoiceSettings.systemPrompt
+        liveModelSettings,
+        liveSystemPrompt
       );
 
       addMessage(threadId, {
@@ -795,13 +816,37 @@ export default function ChatInterface() {
     }
   };
 
-  const schedulePipecatFallbackResponse = (threadId: string) => {
+  const flushLiveVoiceTurn = () => {
+    const transcript = pipecatPendingTranscriptRef.current.trim();
+    if (!transcript) return;
+
+    const threadId = ensureThreadForLiveVoice(transcript);
+    addMessage(threadId, {
+      id: generateId(),
+      role: "user",
+      content: transcript,
+      timestamp: Date.now(),
+      type: "voice",
+    });
+    pipecatPendingTranscriptRef.current = "";
+    setLiveTranscript(transcript);
+    void generateLiveVoiceResponse(threadId, transcript);
+  };
+
+  const scheduleLiveVoiceTurnFlush = (delayMs = 1200) => {
     clearPipecatFallbackTimer();
     pipecatFallbackTimerRef.current = window.setTimeout(() => {
       pipecatFallbackTimerRef.current = null;
-      if (!liveVoiceEnabledRef.current || pipecatFallbackInFlightRef.current) return;
-      void generateLiveVoiceFallbackResponse(threadId, pipecatPendingTranscriptRef.current);
-    }, 6500);
+      if (
+        !liveVoiceEnabledRef.current ||
+        liveUserSpeakingRef.current ||
+        liveMicMutedRef.current ||
+        pipecatFallbackInFlightRef.current
+      ) {
+        return;
+      }
+      flushLiveVoiceTurn();
+    }, delayMs);
   };
 
   const sendMessage = async () => {
@@ -1301,6 +1346,9 @@ export default function ChatInterface() {
           setActivityStatus(formatMicrophoneError(error));
         },
         onUserStartedSpeaking: () => {
+          if (liveMicMutedRef.current) return;
+          liveUserSpeakingRef.current = true;
+          clearPipecatFallbackTimer();
           stopSpeech();
           liveTurnStateRef.current = "listening";
           setLiveVoicePhase("listening");
@@ -1308,16 +1356,21 @@ export default function ChatInterface() {
           setActivityStatus("Listening...");
         },
         onUserStoppedSpeaking: () => {
+          liveUserSpeakingRef.current = false;
           liveTurnStateRef.current = "processing";
           setLiveVoicePhase("processing");
           setLiveVoiceRecording(false);
-          setActivityStatus("Heard you. Thinking...");
+          setActivityStatus(
+            pipecatPendingTranscriptRef.current
+              ? "Heard you. Holding for a brief pause before answering..."
+              : "Heard you. Waiting for transcript..."
+          );
+          scheduleLiveVoiceTurnFlush(1250);
         },
         onUserTranscript: (data: PipecatTranscriptData) => {
           if (!data.text) return;
           setLiveTranscript(data.text);
           if (!data.final) return;
-          const threadId = ensureThread(data.text);
           pipecatPendingTranscriptRef.current = [
             pipecatPendingTranscriptRef.current,
             data.text,
@@ -1325,15 +1378,10 @@ export default function ChatInterface() {
             .filter(Boolean)
             .join(" ")
             .trim();
-          addMessage(threadId, {
-            id: generateId(),
-            role: "user",
-            content: data.text,
-            timestamp: Date.now(),
-            type: "voice",
-          });
-          setActivityStatus("Heard you. Waiting briefly for Pipecat, then UVB will answer.");
-          schedulePipecatFallbackResponse(threadId);
+          setActivityStatus("Transcript captured. Pause briefly and UVB will answer.");
+          if (!liveUserSpeakingRef.current) {
+            scheduleLiveVoiceTurnFlush(1250);
+          }
         },
         onBotStartedSpeaking: () => {
           clearPipecatFallbackTimer();
@@ -1412,6 +1460,10 @@ export default function ChatInterface() {
     liveAutoStopInFlightRef.current = false;
     clearPipecatFallbackTimer();
     pipecatPendingTranscriptRef.current = "";
+    pipecatFallbackInFlightRef.current = false;
+    liveUserSpeakingRef.current = false;
+    liveMicMutedRef.current = false;
+    setLiveMicMuted(false);
     setLiveTranscript("");
     setLiveMetrics(null);
     setInputMode("voice");
@@ -1443,10 +1495,40 @@ export default function ChatInterface() {
 
   const stopLiveVoiceTurn = async () => {
     if (pipecatClientRef.current) {
-      setActivityStatus("Pipecat manages turn endings automatically. Pause briefly to send the turn.");
+      flushLiveVoiceTurn();
       return;
     }
     await finishLiveVoiceTurn("manual");
+  };
+
+  const setLiveMicMutedState = (muted: boolean) => {
+    liveMicMutedRef.current = muted;
+    setLiveMicMuted(muted);
+
+    if (pipecatClientRef.current) {
+      pipecatClientRef.current.enableMic(!muted);
+      const localTrack = pipecatClientRef.current.tracks().local?.audio;
+      if (localTrack) localTrack.enabled = !muted;
+    }
+
+    liveStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = !muted;
+    });
+
+    if (muted) {
+      clearPipecatFallbackTimer();
+      liveUserSpeakingRef.current = false;
+      setLiveVoiceRecording(false);
+      setVoiceLevels(Array(32).fill(0.05));
+      setActivityStatus("Live mic muted. Sophia will not hear room noise.");
+      return;
+    }
+
+    setActivityStatus("Live mic unmuted. Start talking when ready.");
+  };
+
+  const toggleLiveMicMuted = () => {
+    setLiveMicMutedState(!liveMicMutedRef.current);
   };
 
   const cancelLiveVoice = async () => {
@@ -1471,6 +1553,8 @@ export default function ChatInterface() {
     clearPipecatFallbackTimer();
     pipecatPendingTranscriptRef.current = "";
     pipecatFallbackInFlightRef.current = false;
+    liveUserSpeakingRef.current = false;
+    setLiveMicMutedState(false);
     setLiveVoiceEnabled(false);
     liveVoiceEnabledRef.current = false;
     liveTurnStateRef.current = "idle";
@@ -1730,7 +1814,9 @@ export default function ChatInterface() {
                 }`}
               >
                 {liveVoiceEnabled
-                  ? liveVoiceConnected
+                  ? liveMicMuted
+                    ? "Mic muted"
+                    : liveVoiceConnected
                     ? "Live voice on"
                     : "Live connecting"
                   : "Live voice"}
@@ -1953,7 +2039,9 @@ export default function ChatInterface() {
                 />
                 <span className="text-sm text-uvb-text-secondary">
                   {liveVoiceEnabled
-                    ? liveVoicePhase === "listening"
+                    ? liveMicMuted
+                      ? "Live mic muted."
+                      : liveVoicePhase === "listening"
                       ? "Live voice listening..."
                       : liveVoicePhase === "processing"
                       ? "Live voice processing..."
@@ -1973,6 +2061,22 @@ export default function ChatInterface() {
                 <div className="ml-auto flex items-center gap-2">
                   {liveVoiceEnabled && (
                     <>
+                      <button
+                        onClick={toggleLiveMicMuted}
+                        title={
+                          liveMicMuted
+                            ? "Unmute the live microphone"
+                            : "Mute the live microphone so room noise does not interrupt Sophia"
+                        }
+                        aria-label={liveMicMuted ? "Unmute live microphone" : "Mute live microphone"}
+                        className={`rounded-lg border px-3 py-1.5 text-xs ${
+                          liveMicMuted
+                            ? "border-uvb-accent-yellow/40 bg-uvb-accent-yellow/10 text-uvb-accent-yellow"
+                            : "border-uvb-border/40 text-uvb-text-secondary hover:bg-uvb-light-gray/20"
+                        }`}
+                      >
+                        {liveMicMuted ? "Unmute mic" : "Mute mic"}
+                      </button>
                       {liveVoiceRecording && voiceSettings.liveTransport === "websocket" && (
                         <button
                           onClick={stopLiveVoiceTurn}
