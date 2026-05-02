@@ -17,6 +17,10 @@ import {
   PauseIcon,
   SpeakerXMarkIcon,
   ArrowUturnLeftIcon,
+  PencilSquareIcon,
+  TrashIcon,
+  CheckIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { Bot, User, Sparkles } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
@@ -214,6 +218,8 @@ export default function ChatInterface() {
     addThread,
     addMessage,
     updateMessage,
+    updateThread,
+    deleteThread,
     setActiveThread,
     isRecording,
     setIsRecording,
@@ -242,6 +248,8 @@ export default function ChatInterface() {
   >("idle");
   const [liveVadDebug, setLiveVadDebug] = useState({ level: 0, threshold: 0, floor: 0 });
   const [liveTranscript, setLiveTranscript] = useState("");
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [editingThreadTitle, setEditingThreadTitle] = useState("");
   const [liveMetrics, setLiveMetrics] = useState<{
     sttMs?: number;
     llmMs?: number;
@@ -270,6 +278,9 @@ export default function ChatInterface() {
   const liveAutoStopInFlightRef = useRef(false);
   const liveNoiseFloorRef = useRef(0.01);
   const liveLastVadUiAtRef = useRef(0);
+  const pipecatFallbackTimerRef = useRef<number | null>(null);
+  const pipecatFallbackInFlightRef = useRef(false);
+  const pipecatPendingTranscriptRef = useRef("");
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const voiceFrameRef = useRef<number | null>(null);
@@ -322,9 +333,14 @@ export default function ChatInterface() {
 
   useEffect(() => {
     return () => {
+      if (pipecatFallbackTimerRef.current) {
+        window.clearTimeout(pipecatFallbackTimerRef.current);
+        pipecatFallbackTimerRef.current = null;
+      }
       liveSocketRef.current?.close();
       liveRecorderRef.current?.stop();
       liveStreamRef.current?.getTracks().forEach((track) => track.stop());
+      void pipecatClientRef.current?.disconnect().catch(() => undefined);
     };
   }, []);
 
@@ -339,6 +355,35 @@ export default function ChatInterface() {
     };
     addThread(thread);
     setActiveThread(thread.id);
+  };
+
+  const beginRenameThread = (thread: { id: string; title: string }) => {
+    setEditingThreadId(thread.id);
+    setEditingThreadTitle(thread.title);
+  };
+
+  const cancelRenameThread = () => {
+    setEditingThreadId(null);
+    setEditingThreadTitle("");
+  };
+
+  const saveRenameThread = (threadId: string) => {
+    const title = editingThreadTitle.trim() || "New Conversation";
+    updateThread(threadId, { title });
+    setEditingThreadId(null);
+    setEditingThreadTitle("");
+    setActivityStatus("Chat renamed.");
+  };
+
+  const removeThread = (threadId: string, title: string) => {
+    const confirmed = window.confirm(
+      `Delete "${title || "New Conversation"}"? This removes it from UVB on this browser.`
+    );
+    if (!confirmed) return;
+
+    deleteThread(threadId);
+    if (editingThreadId === threadId) cancelRenameThread();
+    setActivityStatus("Chat deleted.");
   };
 
   const copyText = async (text: string) => {
@@ -666,6 +711,97 @@ export default function ChatInterface() {
       }
       setIsTyping(false);
     }
+  };
+
+  const clearPipecatFallbackTimer = () => {
+    if (!pipecatFallbackTimerRef.current) return;
+    window.clearTimeout(pipecatFallbackTimerRef.current);
+    pipecatFallbackTimerRef.current = null;
+  };
+
+  const generateLiveVoiceFallbackResponse = async (threadId: string, transcript: string) => {
+    const cleanTranscript = transcript.trim();
+    if (!cleanTranscript || pipecatFallbackInFlightRef.current) return;
+
+    pipecatFallbackInFlightRef.current = true;
+    setIsTyping(true);
+    liveTurnStateRef.current = "processing";
+    setLiveVoicePhase("processing");
+    setActivityStatus("Pipecat heard you. Asking the UVB chat bridge for the reply...");
+
+    try {
+      const currentThread = useAppStore.getState().threads.find((thread) => thread.id === threadId);
+      const priorMessages: Array<{ role: "user" | "assistant"; content: string }> =
+        currentThread?.messages
+          .filter((message) => message.role === "user" || message.role === "assistant")
+          .slice(-16)
+          .map((message) => ({
+            role: message.role as "user" | "assistant",
+            content: message.content,
+          })) ?? [];
+
+      if (
+        !priorMessages.some(
+          (message) => message.role === "user" && message.content.trim() === cleanTranscript
+        )
+      ) {
+        priorMessages.push({ role: "user", content: cleanTranscript });
+      }
+
+      const currentModelSettings = loadModelSettings();
+      const currentVoiceSettings = loadVoiceSettings();
+      const response = await sendChatToModel(
+        priorMessages,
+        currentModelSettings,
+        currentVoiceSettings.systemPrompt
+      );
+
+      addMessage(threadId, {
+        id: generateId(),
+        role: "assistant",
+        content: response,
+        timestamp: Date.now(),
+        type: "voice",
+      });
+
+      pipecatPendingTranscriptRef.current = "";
+      setLiveTranscript("");
+
+      await speakText(response).catch((error) => {
+        const message = error instanceof Error ? error.message : "TTS failed.";
+        setActivityStatus(message);
+      });
+
+      if (!voiceSettings.autoSpeak) {
+        liveTurnStateRef.current = "idle";
+        setLiveVoicePhase("idle");
+        setActivityStatus("Live voice response complete.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Live voice fallback failed.";
+      addMessage(threadId, {
+        id: generateId(),
+        role: "assistant",
+        content: `I heard you, but the local model bridge failed while answering.\n\n${message}`,
+        timestamp: Date.now(),
+        type: "text",
+      });
+      liveTurnStateRef.current = "idle";
+      setLiveVoicePhase("idle");
+      setActivityStatus(`Live voice response failed: ${message}`);
+    } finally {
+      pipecatFallbackInFlightRef.current = false;
+      setIsTyping(false);
+    }
+  };
+
+  const schedulePipecatFallbackResponse = (threadId: string) => {
+    clearPipecatFallbackTimer();
+    pipecatFallbackTimerRef.current = window.setTimeout(() => {
+      pipecatFallbackTimerRef.current = null;
+      if (!liveVoiceEnabledRef.current || pipecatFallbackInFlightRef.current) return;
+      void generateLiveVoiceFallbackResponse(threadId, pipecatPendingTranscriptRef.current);
+    }, 6500);
   };
 
   const sendMessage = async () => {
@@ -1114,6 +1250,8 @@ export default function ChatInterface() {
     const upsertAssistantText = (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      clearPipecatFallbackTimer();
+      pipecatPendingTranscriptRef.current = "";
       const threadId = ensureThread();
       if (!assistantMessageId) {
         assistantMessageId = generateId();
@@ -1180,6 +1318,13 @@ export default function ChatInterface() {
           setLiveTranscript(data.text);
           if (!data.final) return;
           const threadId = ensureThread(data.text);
+          pipecatPendingTranscriptRef.current = [
+            pipecatPendingTranscriptRef.current,
+            data.text,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
           addMessage(threadId, {
             id: generateId(),
             role: "user",
@@ -1187,8 +1332,11 @@ export default function ChatInterface() {
             timestamp: Date.now(),
             type: "voice",
           });
+          setActivityStatus("Heard you. Waiting briefly for Pipecat, then UVB will answer.");
+          schedulePipecatFallbackResponse(threadId);
         },
         onBotStartedSpeaking: () => {
+          clearPipecatFallbackTimer();
           liveTurnStateRef.current = "speaking";
           setLiveVoicePhase("speaking");
           setActivityStatus("Sophia is speaking. Start talking to barge in.");
@@ -1196,6 +1344,7 @@ export default function ChatInterface() {
         onBotStoppedSpeaking: () => {
           assistantMessageId = null;
           assistantText = "";
+          pipecatPendingTranscriptRef.current = "";
           liveTurnStateRef.current = "idle";
           setLiveVoicePhase("idle");
           setActivityStatus("Pipecat live voice ready for the next turn.");
@@ -1207,11 +1356,19 @@ export default function ChatInterface() {
           upsertAssistantText(assistantText);
         },
         onBotOutput: (data) => {
-          if (!data.text || !data.spoken) return;
+          if (!data.text) return;
           upsertAssistantText(data.text);
         },
         onTrackStarted: (track: MediaStreamTrack, participant?: PipecatParticipant) => {
-          if (track.kind !== "audio" || participant?.local) return;
+          if (track.kind !== "audio") return;
+          if (participant?.local) {
+            void stopVoiceLevelMonitor().then(() => {
+              const monitorStream = new MediaStream([track]);
+              liveStreamRef.current = monitorStream;
+              startVoiceLevelMonitor(monitorStream);
+            });
+            return;
+          }
           const audio = pipecatAudioRef.current ?? new Audio();
           audio.autoplay = true;
           audio.srcObject = new MediaStream([track]);
@@ -1221,7 +1378,7 @@ export default function ChatInterface() {
           });
         },
         onLocalAudioLevel: (level) => {
-          const normalized = Math.min(1, Math.max(0.03, level));
+          const normalized = Math.min(1, Math.max(0.03, level > 1 ? level / 100 : level * 8));
           setVoiceLevels((levels) => [...levels.slice(1), normalized]);
         },
         onError: (message) => {
@@ -1253,6 +1410,8 @@ export default function ChatInterface() {
     liveCaptureArmedRef.current = false;
     liveSpeechStartedRef.current = false;
     liveAutoStopInFlightRef.current = false;
+    clearPipecatFallbackTimer();
+    pipecatPendingTranscriptRef.current = "";
     setLiveTranscript("");
     setLiveMetrics(null);
     setInputMode("voice");
@@ -1309,6 +1468,9 @@ export default function ChatInterface() {
       pipecatAudioRef.current.srcObject = null;
       pipecatAudioRef.current = null;
     }
+    clearPipecatFallbackTimer();
+    pipecatPendingTranscriptRef.current = "";
+    pipecatFallbackInFlightRef.current = false;
     setLiveVoiceEnabled(false);
     liveVoiceEnabledRef.current = false;
     liveTurnStateRef.current = "idle";
@@ -1435,24 +1597,87 @@ export default function ChatInterface() {
           </div>
           <div className="flex-1 overflow-y-auto px-2 space-y-1">
             {threads.map((thread) => (
-              <motion.button
+              <motion.div
                 key={thread.id}
-                onClick={() => setActiveThread(thread.id)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors truncate ${
+                className={`group relative rounded-lg text-sm transition-colors ${
                   activeThreadId === thread.id
                     ? "bg-uvb-deep-teal/30 text-uvb-text-primary border border-uvb-neon-green/10"
                     : "text-uvb-text-secondary hover:bg-uvb-light-gray/30 hover:text-uvb-text-primary"
                 }`}
                 whileHover={{ x: 2 }}
               >
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-3 h-3 flex-shrink-0 text-uvb-text-muted" />
-                  <span className="truncate">{thread.title}</span>
-                </div>
-                <span className="text-[10px] text-uvb-text-muted block mt-0.5">
-                  {new Date(thread.updatedAt).toLocaleDateString()}
-                </span>
-              </motion.button>
+                {editingThreadId === thread.id ? (
+                  <div className="flex items-center gap-1 p-2">
+                    <input
+                      value={editingThreadTitle}
+                      onChange={(event) => setEditingThreadTitle(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") saveRenameThread(thread.id);
+                        if (event.key === "Escape") cancelRenameThread();
+                      }}
+                      aria-label="Chat name"
+                      className="min-w-0 flex-1 rounded-md border border-uvb-border/40 bg-uvb-matte-black/70 px-2 py-1 text-xs text-uvb-text-primary outline-none focus:border-uvb-neon-green/40"
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => saveRenameThread(thread.id)}
+                      title="Save chat name"
+                      aria-label="Save chat name"
+                      className="rounded-md p-1 text-uvb-neon-green hover:bg-uvb-neon-green/10"
+                    >
+                      <CheckIcon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={cancelRenameThread}
+                      title="Cancel rename"
+                      aria-label="Cancel rename"
+                      className="rounded-md p-1 text-uvb-text-muted hover:bg-uvb-light-gray/30 hover:text-uvb-text-secondary"
+                    >
+                      <XMarkIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setActiveThread(thread.id)}
+                      title={`Open ${thread.title || "New Conversation"}`}
+                      className="w-full min-w-0 px-3 py-2 pr-16 text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-3 h-3 flex-shrink-0 text-uvb-text-muted" />
+                        <span className="truncate">{thread.title}</span>
+                      </div>
+                      <span className="text-[10px] text-uvb-text-muted block mt-0.5">
+                        {new Date(thread.updatedAt).toLocaleDateString()}
+                      </span>
+                    </button>
+                    <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          beginRenameThread(thread);
+                        }}
+                        title="Rename chat"
+                        aria-label="Rename chat"
+                        className="rounded-md border border-uvb-border/30 bg-uvb-matte-black/70 p-1 text-uvb-text-muted hover:border-uvb-neon-green/30 hover:text-uvb-neon-green"
+                      >
+                        <PencilSquareIcon className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeThread(thread.id, thread.title);
+                        }}
+                        title="Delete chat"
+                        aria-label="Delete chat"
+                        className="rounded-md border border-uvb-border/30 bg-uvb-matte-black/70 p-1 text-uvb-text-muted hover:border-red-400/30 hover:text-red-300"
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </motion.div>
             ))}
             {threads.length === 0 && (
               <div className="px-3 py-8 text-center">

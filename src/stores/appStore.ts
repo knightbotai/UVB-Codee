@@ -49,6 +49,11 @@ interface AppState {
   isRecording: boolean;
   addThread: (thread: ChatThread) => void;
   setActiveThread: (id: string | null) => void;
+  updateThread: (
+    threadId: string,
+    updates: Partial<Pick<ChatThread, "title" | "context">>
+  ) => void;
+  deleteThread: (threadId: string) => void;
   addMessage: (threadId: string, message: ChatMessage) => void;
   updateMessage: (threadId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   setIsRecording: (recording: boolean) => void;
@@ -90,6 +95,23 @@ export const useAppStore = create<AppState>()(
       addThread: (thread) =>
         set((state) => ({ threads: [...state.threads, thread] })),
       setActiveThread: (id) => set({ activeThreadId: id }),
+      updateThread: (threadId, updates) =>
+        set((state) => ({
+          threads: state.threads.map((thread) =>
+            thread.id === threadId
+              ? { ...thread, ...updates, updatedAt: Date.now() }
+              : thread
+          ),
+        })),
+      deleteThread: (threadId) =>
+        set((state) => {
+          const nextThreads = state.threads.filter((thread) => thread.id !== threadId);
+          const deletingActiveThread = state.activeThreadId === threadId;
+          return {
+            threads: nextThreads,
+            activeThreadId: deletingActiveThread ? nextThreads[0]?.id ?? null : state.activeThreadId,
+          };
+        }),
       addMessage: (threadId, message) =>
         set((state) => ({
           threads: state.threads.map((t) =>

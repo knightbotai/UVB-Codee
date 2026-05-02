@@ -25,6 +25,7 @@ from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
+    IceCandidate,
     SmallWebRTCPatchRequest,
     SmallWebRTCRequest,
     SmallWebRTCRequestHandler,
@@ -67,6 +68,36 @@ def merge_request_settings(payload: dict[str, Any] | None) -> tuple[dict[str, An
         else {}
     )
     return model_settings, voice_settings
+
+
+def normalize_ice_candidates(candidates: list[Any] | None) -> list[IceCandidate]:
+    normalized: list[IceCandidate] = []
+    for candidate in candidates or []:
+        if isinstance(candidate, IceCandidate):
+            normalized.append(candidate)
+            continue
+
+        if not isinstance(candidate, dict):
+            continue
+
+        candidate_sdp = candidate.get("candidate")
+        sdp_mid = candidate.get("sdpMid") or candidate.get("sdp_mid")
+        sdp_mline_index = candidate.get("sdpMLineIndex")
+        if sdp_mline_index is None:
+            sdp_mline_index = candidate.get("sdp_mline_index")
+
+        if candidate_sdp is None or sdp_mid is None or sdp_mline_index is None:
+            continue
+
+        normalized.append(
+            IceCandidate(
+                candidate=str(candidate_sdp),
+                sdp_mid=str(sdp_mid),
+                sdp_mline_index=int(sdp_mline_index),
+            )
+        )
+
+    return normalized
 
 
 def create_app() -> FastAPI:
@@ -216,9 +247,11 @@ def create_app() -> FastAPI:
             payload = await request.json()
             patch_request = SmallWebRTCPatchRequest(
                 pc_id=payload["pc_id"],
-                candidates=payload.get("candidates") or [],
+                candidates=normalize_ice_candidates(payload.get("candidates")),
             )
             return await request_handler.handle_patch_request(patch_request)
+        except HTTPException:
+            raise
         except Exception as error:
             print("SmallWebRTC ICE patch failed:", repr(error), flush=True)
             traceback.print_exc()
