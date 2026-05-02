@@ -6,6 +6,7 @@ export interface VoiceSettings {
   autoSpeak: boolean;
   volume: number;
   liveVoiceUrl: string;
+  liveWebRtcUrl: string;
   liveTransport: "websocket" | "small-webrtc" | "webrtc" | "livekit";
   liveSttProvider: "faster-whisper" | "parakeet-realtime-eou" | "custom";
   liveTtsProvider:
@@ -33,7 +34,8 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   autoSpeak: true,
   volume: 0.9,
   liveVoiceUrl: "ws://127.0.0.1:8765/live",
-  liveTransport: "websocket",
+  liveWebRtcUrl: "http://127.0.0.1:8766/api/offer",
+  liveTransport: "small-webrtc",
   liveSttProvider: "faster-whisper",
   liveTtsProvider: "kokoro",
   liveVadProvider: "browser-manual",
@@ -57,6 +59,7 @@ export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): V
       ? Math.min(1, Math.max(0, volume))
       : DEFAULT_VOICE_SETTINGS.volume,
     liveVoiceUrl: settings.liveVoiceUrl?.trim() || DEFAULT_VOICE_SETTINGS.liveVoiceUrl,
+    liveWebRtcUrl: settings.liveWebRtcUrl?.trim() || DEFAULT_VOICE_SETTINGS.liveWebRtcUrl,
     liveTransport: ["websocket", "small-webrtc", "webrtc", "livekit"].includes(
       settings.liveTransport ?? ""
     )

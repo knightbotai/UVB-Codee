@@ -1,6 +1,7 @@
 param(
   [switch]$SkipTelegram,
   [switch]$SkipVoiceAgent,
+  [switch]$SkipPipecat,
   [switch]$BuildFirst,
   [switch]$NoBrowser
 )
@@ -66,6 +67,18 @@ if (-not $SkipVoiceAgent) {
       -Command "Set-Location '$Root'; $pythonCommand '$voiceAgentPath'"
   } else {
     Write-Warning "Python was not found. UVB launched without the live voice sidecar."
+  }
+}
+
+if (-not $SkipPipecat) {
+  $pipecatPython = Join-Path $Root ".venv-pipecat\Scripts\python.exe"
+  if (Test-Path $pipecatPython) {
+    $pipecatAgentPath = Join-Path $Root "services\voice-agent\pipecat_agent.py"
+    Start-HiddenPwsh `
+      -Name "pipecat-agent" `
+      -Command "Set-Location '$Root'; '$pipecatPython' '$pipecatAgentPath'"
+  } else {
+    Write-Warning "Pipecat venv was not found at $pipecatPython. Run: py -3.11 -m venv .venv-pipecat; .\.venv-pipecat\Scripts\python.exe -m pip install -r services\voice-agent\requirements-pipecat.txt"
   }
 }
 

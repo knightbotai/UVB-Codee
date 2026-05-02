@@ -8,12 +8,15 @@
     "start": "next start",
     "telegram": "node scripts/telegram-worker.mjs",
     "voice-agent": "python services/voice-agent/voice_agent.py",
+    "voice-pipecat": ".venv-pipecat/Scripts/python.exe services/voice-agent/pipecat_agent.py",
     "lint": "eslint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
+    "@pipecat-ai/client-js": "^1.7.0",
+    "@pipecat-ai/small-webrtc-transport": "^1.10.0",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.7.0",
     "next": "^16.1.3",

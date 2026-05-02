@@ -441,9 +441,32 @@ export default function SettingsPage() {
                         </p>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
+                        <div className="col-span-2 rounded-lg border border-uvb-neon-green/20 bg-uvb-neon-green/5 p-3">
+                          <p className="text-xs font-semibold text-uvb-neon-green">
+                            Active target: Pipecat SmallWebRTC
+                          </p>
+                          <p className="mt-1 text-[11px] leading-relaxed text-uvb-text-muted">
+                            SmallWebRTC is the preferred live voice route. The legacy
+                            WebSocket agent remains available only as a fallback/debug path.
+                          </p>
+                        </div>
                         <div className="col-span-2">
                           <label className="text-xs text-uvb-text-muted block mb-1.5">
-                            Voice Agent WebSocket
+                            Pipecat WebRTC Offer Endpoint
+                          </label>
+                          <input
+                            type="url"
+                            value={voiceSettings.liveWebRtcUrl}
+                            onChange={(event) =>
+                              updateVoiceSettings({ liveWebRtcUrl: event.target.value })
+                            }
+                            className="input-field"
+                            placeholder="http://127.0.0.1:8766/api/offer"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="text-xs text-uvb-text-muted block mb-1.5">
+                            Legacy Voice Agent WebSocket
                           </label>
                           <input
                             type="url"

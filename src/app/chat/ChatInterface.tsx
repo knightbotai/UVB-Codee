@@ -41,6 +41,20 @@ const LIVE_VOICE_NOISE_MULTIPLIER = 2.1;
 const LIVE_VOICE_SILENCE_MS = 950;
 const LIVE_VOICE_MIN_TURN_MS = 500;
 
+type PipecatClientLike = {
+  connect: (params?: unknown) => Promise<unknown>;
+  disconnect: () => Promise<void>;
+};
+
+type PipecatTranscriptData = {
+  text: string;
+  final?: boolean;
+};
+
+type PipecatParticipant = {
+  local?: boolean;
+};
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -243,6 +257,8 @@ export default function ChatInterface() {
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const liveSocketRef = useRef<WebSocket | null>(null);
+  const pipecatClientRef = useRef<PipecatClientLike | null>(null);
+  const pipecatAudioRef = useRef<HTMLAudioElement | null>(null);
   const liveRecorderRef = useRef<MediaRecorder | null>(null);
   const liveStreamRef = useRef<MediaStream | null>(null);
   const liveVoiceEnabledRef = useRef(false);
@@ -1077,6 +1093,153 @@ export default function ChatInterface() {
     recorder.start(200);
   };
 
+  const connectPipecatLiveVoice = async () => {
+    const [{ PipecatClient }, { SmallWebRTCTransport }] = await Promise.all([
+      import("@pipecat-ai/client-js"),
+      import("@pipecat-ai/small-webrtc-transport"),
+    ]);
+    const currentModelSettings = loadModelSettings();
+    const currentVoiceSettings = loadVoiceSettings();
+
+    let activeThreadForSession = activeThreadId;
+    let assistantMessageId: string | null = null;
+    let assistantText = "";
+
+    const ensureThread = (seed = "Live Voice") => {
+      if (activeThreadForSession) return activeThreadForSession;
+      activeThreadForSession = ensureThreadForLiveVoice(seed);
+      return activeThreadForSession;
+    };
+
+    const upsertAssistantText = (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const threadId = ensureThread();
+      if (!assistantMessageId) {
+        assistantMessageId = generateId();
+        addMessage(threadId, {
+          id: assistantMessageId,
+          role: "assistant",
+          content: trimmed,
+          timestamp: Date.now(),
+          type: "voice",
+        });
+        return;
+      }
+      updateMessage(threadId, assistantMessageId, {
+        content: trimmed,
+        timestamp: Date.now(),
+      });
+    };
+
+    const client = new PipecatClient({
+      transport: new SmallWebRTCTransport(),
+      enableMic: true,
+      enableCam: false,
+      callbacks: {
+        onConnected: () => {
+          setLiveVoiceConnected(true);
+          setActivityStatus("Pipecat WebRTC connected. Waiting for bot ready...");
+        },
+        onDisconnected: () => {
+          setLiveVoiceConnected(false);
+          setLiveVoiceRecording(false);
+          setLiveVoicePhase("idle");
+          if (liveVoiceEnabledRef.current) {
+            setActivityStatus("Pipecat WebRTC disconnected.");
+          }
+        },
+        onBotReady: () => {
+          liveTurnStateRef.current = "idle";
+          setLiveVoicePhase("idle");
+          setActivityStatus("Pipecat live voice is ready. Start talking; turns auto-send after a lull.");
+        },
+        onTransportStateChanged: (state) => {
+          setActivityStatus(`Pipecat transport: ${state}`);
+        },
+        onDeviceError: (error) => {
+          setActivityStatus(formatMicrophoneError(error));
+        },
+        onUserStartedSpeaking: () => {
+          stopSpeech();
+          liveTurnStateRef.current = "listening";
+          setLiveVoicePhase("listening");
+          setLiveVoiceRecording(true);
+          setActivityStatus("Listening...");
+        },
+        onUserStoppedSpeaking: () => {
+          liveTurnStateRef.current = "processing";
+          setLiveVoicePhase("processing");
+          setLiveVoiceRecording(false);
+          setActivityStatus("Heard you. Thinking...");
+        },
+        onUserTranscript: (data: PipecatTranscriptData) => {
+          if (!data.text) return;
+          setLiveTranscript(data.text);
+          if (!data.final) return;
+          const threadId = ensureThread(data.text);
+          addMessage(threadId, {
+            id: generateId(),
+            role: "user",
+            content: data.text,
+            timestamp: Date.now(),
+            type: "voice",
+          });
+        },
+        onBotStartedSpeaking: () => {
+          liveTurnStateRef.current = "speaking";
+          setLiveVoicePhase("speaking");
+          setActivityStatus("Sophia is speaking. Start talking to barge in.");
+        },
+        onBotStoppedSpeaking: () => {
+          assistantMessageId = null;
+          assistantText = "";
+          liveTurnStateRef.current = "idle";
+          setLiveVoicePhase("idle");
+          setActivityStatus("Pipecat live voice ready for the next turn.");
+          setLiveTranscript("");
+        },
+        onBotLlmText: (data) => {
+          if (!data.text) return;
+          assistantText += data.text;
+          upsertAssistantText(assistantText);
+        },
+        onBotOutput: (data) => {
+          if (!data.text || !data.spoken) return;
+          upsertAssistantText(data.text);
+        },
+        onTrackStarted: (track: MediaStreamTrack, participant?: PipecatParticipant) => {
+          if (track.kind !== "audio" || participant?.local) return;
+          const audio = pipecatAudioRef.current ?? new Audio();
+          audio.autoplay = true;
+          audio.srcObject = new MediaStream([track]);
+          pipecatAudioRef.current = audio;
+          void audio.play().catch(() => {
+            setActivityStatus("Pipecat audio is ready, but the browser blocked autoplay. Click the page once and try again.");
+          });
+        },
+        onLocalAudioLevel: (level) => {
+          const normalized = Math.min(1, Math.max(0.03, level));
+          setVoiceLevels((levels) => [...levels.slice(1), normalized]);
+        },
+        onError: (message) => {
+          setActivityStatus(`Pipecat error: ${JSON.stringify(message)}`);
+        },
+      },
+    });
+
+    pipecatClientRef.current = client;
+    await client.connect({
+      webrtcRequestParams: {
+        endpoint: currentVoiceSettings.liveWebRtcUrl,
+        requestData: {
+          modelSettings: currentModelSettings,
+          voiceSettings: currentVoiceSettings,
+        },
+      },
+    });
+  };
+
   const startLiveVoice = async () => {
     stopSpeech();
     setLiveVoiceEnabled(true);
@@ -1094,6 +1257,11 @@ export default function ChatInterface() {
     setActivityStatus("Starting live voice sidecar session...");
 
     try {
+      if (voiceSettings.liveTransport === "small-webrtc" || voiceSettings.liveTransport === "webrtc") {
+        await connectPipecatLiveVoice();
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       liveStreamRef.current = stream;
       startVoiceLevelMonitor(stream);
@@ -1113,6 +1281,10 @@ export default function ChatInterface() {
   };
 
   const stopLiveVoiceTurn = async () => {
+    if (pipecatClientRef.current) {
+      setActivityStatus("Pipecat manages turn endings automatically. Pause briefly to send the turn.");
+      return;
+    }
     await finishLiveVoiceTurn("manual");
   };
 
@@ -1126,6 +1298,15 @@ export default function ChatInterface() {
     }
     liveSocketRef.current?.close();
     liveSocketRef.current = null;
+    if (pipecatClientRef.current) {
+      await pipecatClientRef.current.disconnect().catch(() => undefined);
+      pipecatClientRef.current = null;
+    }
+    if (pipecatAudioRef.current) {
+      pipecatAudioRef.current.pause();
+      pipecatAudioRef.current.srcObject = null;
+      pipecatAudioRef.current = null;
+    }
     setLiveVoiceEnabled(false);
     liveVoiceEnabledRef.current = false;
     liveTurnStateRef.current = "idle";
@@ -1565,7 +1746,7 @@ export default function ChatInterface() {
                 <div className="ml-auto flex items-center gap-2">
                   {liveVoiceEnabled && (
                     <>
-                      {liveVoiceRecording && (
+                      {liveVoiceRecording && voiceSettings.liveTransport === "websocket" && (
                         <button
                           onClick={stopLiveVoiceTurn}
                           title="Force-send this live voice turn now"
