@@ -294,7 +294,7 @@ export default function MediaStudioPage() {
             <div className="flex flex-col items-center justify-center h-48 text-center">
               <FileText className="w-8 h-8 text-uvb-text-muted mb-2" />
               <p className="text-sm text-uvb-text-muted">
-                Upload a {activeTab} to see analysis results
+                Upload {activeTab === "image" ? "an image" : "a video"} to see analysis results
               </p>
             </div>
           ) : (

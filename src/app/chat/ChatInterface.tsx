@@ -2451,7 +2451,7 @@ export default function ChatInterface() {
                     { icon: "🧠", label: "Long-form reasoning", desc: "Deep analysis" },
                     { icon: "🎤", label: "Voice analysis", desc: "Audio processing" },
                     { icon: "👁️", label: "Vision analytics", desc: "Image understanding" },
-                    { icon: "🌐", label: "Browser use", desc: "Web interaction" },
+                    { icon: "🌐", label: "Agent jobs", desc: "Supervised tools" },
                   ].map((feat) => (
                     <button
                       key={feat.label}
