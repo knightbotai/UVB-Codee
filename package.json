@@ -8,6 +8,7 @@
     "start": "next start",
     "telegram": "node scripts/telegram-worker.mjs",
     "voice:bootstrap": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-voice-stack.ps1 -SkipExisting",
+    "vllm:local-media": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/restart-vllm-local-media.ps1",
     "voice-agent": "python services/voice-agent/voice_agent.py",
     "voice-pipecat": ".venv-pipecat/Scripts/python.exe services/voice-agent/pipecat_agent.py",
     "lint": "eslint",

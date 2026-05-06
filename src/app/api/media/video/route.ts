@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
@@ -23,10 +24,19 @@ const DEFAULT_VIDEO_FRAME_MAX_WIDTH = Number.parseInt(
   process.env.UVB_LOCAL_VIDEO_FRAME_MAX_WIDTH ?? "960",
   10
 );
+const DEFAULT_VIDEO_DIRECT_MAX_MB = Number.parseInt(
+  process.env.UVB_LOCAL_VIDEO_DIRECT_MAX_MB ?? "500",
+  10
+);
+const MODEL_MEDIA_HOST_DIR = path.resolve(
+  process.env.UVB_MODEL_MEDIA_HOST_DIR ?? path.join(process.cwd(), ".uvb", "model-media")
+);
+const MODEL_MEDIA_CONTAINER_DIR = (process.env.UVB_MODEL_MEDIA_CONTAINER_DIR ?? "/uvb-media").replace(/\/+$/, "");
 
 type ChatContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string; detail: "auto" } };
+  | { type: "image_url"; image_url: { url: string; detail: "auto" } }
+  | { type: "video_url"; video_url: { url: string } };
 
 interface StoryboardFrame {
   index: number;
@@ -66,6 +76,22 @@ function runProcess(command: string, args: string[]) {
       reject(new Error(`${command} exited with ${code}: ${stderr.slice(-1000)}`));
     });
   });
+}
+
+function sanitizeMediaExtension(extension: string) {
+  const cleanExtension = String(extension || ".mp4").toLowerCase().replace(/[^a-z0-9.]/g, "");
+  return cleanExtension.startsWith(".") && cleanExtension.length > 1 ? cleanExtension : ".mp4";
+}
+
+async function writeModelMediaFile(buffer: Buffer, extension: string) {
+  await mkdir(MODEL_MEDIA_HOST_DIR, { recursive: true });
+  const fileName = `${Date.now()}-${randomUUID()}${sanitizeMediaExtension(extension)}`;
+  const hostPath = path.join(MODEL_MEDIA_HOST_DIR, fileName);
+  await writeFile(hostPath, buffer);
+  return {
+    hostPath,
+    containerUrl: `file://${MODEL_MEDIA_CONTAINER_DIR}/${fileName}`,
+  };
 }
 
 async function probeDuration(inputPath: string) {
@@ -219,6 +245,7 @@ async function askVideoModel({
   transcript,
   frames,
   storyboardSheet,
+  videoUrl,
   userPrompt,
 }: {
   fileName: string;
@@ -226,6 +253,7 @@ async function askVideoModel({
   transcript: string;
   frames: StoryboardFrame[];
   storyboardSheet: string;
+  videoUrl: string;
   userPrompt: string;
 }) {
   const runtime = await loadRuntimeSettings();
@@ -247,17 +275,35 @@ async function askVideoModel({
   ]
     .filter(Boolean)
     .join("\n\n");
-  const content: ChatContentPart[] = [
+  const baseTextPart: ChatContentPart = { type: "text", text: prompt };
+  const directContent: ChatContentPart[] = [
+    baseTextPart,
+  ];
+  if (videoUrl) {
+    directContent.push(
+      {
+        type: "text",
+        text: "Watch the attached video directly. Use the transcript and sampled-frame timestamps as supporting context.",
+      },
+      { type: "video_url", video_url: { url: videoUrl } }
+    );
+  }
+  const fallbackContent: ChatContentPart[] = [
     { type: "text", text: prompt },
   ];
   if (storyboardSheet) {
-    content.push({
+    fallbackContent.push({
+      type: "text",
+      text: "Fallback storyboard contact sheet containing the sampled video timeline.",
+    });
+    fallbackContent.push({
       type: "image_url",
       image_url: { url: storyboardSheet, detail: "auto" },
     });
   }
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  async function requestAnalysis(content: ChatContentPart[]) {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -269,7 +315,7 @@ async function askVideoModel({
         {
           role: "system",
           content:
-            "You are KnightBot/Sophia inside UVB. Analyze uploaded videos from local evidence: ordered frames and audio transcript. Be vivid, useful, and explicit about uncertainty.",
+            "You are KnightBot/Sophia inside UVB. Analyze uploaded videos from direct video when available, plus ordered frames and audio transcript as supporting evidence. Be vivid, useful, and explicit about uncertainty.",
         },
         { role: "user", content },
       ],
@@ -280,25 +326,34 @@ async function askVideoModel({
         enable_thinking: settings.enableThinking,
       },
     }),
-  });
-  const rawText = await response.text();
-  let data: OpenAIChatResponse | null = null;
+    });
+    const rawText = await response.text();
+    let data: OpenAIChatResponse | null = null;
+
+    try {
+      data = rawText ? (JSON.parse(rawText) as OpenAIChatResponse) : null;
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok) {
+      const message = data?.error?.message ?? rawText ?? response.statusText;
+      throw new Error(`Local model returned ${response.status}: ${message}`);
+    }
+
+    const contentText = data?.choices?.[0]?.message?.content?.trim();
+    if (!contentText) throw new Error("Local model returned an empty video analysis.");
+    return contentText;
+  }
+
+  if (!videoUrl) return requestAnalysis(fallbackContent);
 
   try {
-    data = rawText ? (JSON.parse(rawText) as OpenAIChatResponse) : null;
-  } catch {
-    data = null;
+    return await requestAnalysis(directContent);
+  } catch (error) {
+    if (!storyboardSheet) throw error;
+    return requestAnalysis(fallbackContent);
   }
-
-  if (!response.ok) {
-    const message = data?.error?.message ?? rawText ?? response.statusText;
-    throw new Error(`Local model returned ${response.status}: ${message}`);
-  }
-
-  const contentText = data?.choices?.[0]?.message?.content?.trim();
-  if (!contentText) throw new Error("Local model returned an empty video analysis.");
-
-  return contentText;
 }
 
 export async function POST(request: NextRequest) {
@@ -320,9 +375,20 @@ export async function POST(request: NextRequest) {
   const inputExtension = path.extname(file.name || "") || ".mp4";
   const inputPath = path.join(tempDir, `input${inputExtension}`);
   const audioPath = path.join(tempDir, "audio.mp3");
+  let modelMediaPath = "";
 
   try {
-    await writeFile(inputPath, Buffer.from(await file.arrayBuffer()));
+    const inputBytes = Buffer.from(await file.arrayBuffer());
+    await writeFile(inputPath, inputBytes);
+    const directMaxBytes = (Number.isFinite(DEFAULT_VIDEO_DIRECT_MAX_MB) && DEFAULT_VIDEO_DIRECT_MAX_MB > 0
+      ? DEFAULT_VIDEO_DIRECT_MAX_MB
+      : 500) * 1024 * 1024;
+    let videoUrl = "";
+    if (inputBytes.length <= directMaxBytes) {
+      const modelMedia = await writeModelMediaFile(inputBytes, inputExtension);
+      modelMediaPath = modelMedia.hostPath;
+      videoUrl = modelMedia.containerUrl;
+    }
     const durationSeconds = await probeDuration(inputPath);
     let hasAudio = true;
     await runProcess("ffmpeg", [
@@ -353,6 +419,7 @@ export async function POST(request: NextRequest) {
       transcript,
       frames,
       storyboardSheet,
+      videoUrl,
       userPrompt,
     });
 
@@ -368,5 +435,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    if (modelMediaPath) {
+      await rm(modelMediaPath, { force: true }).catch(() => undefined);
+    }
   }
 }

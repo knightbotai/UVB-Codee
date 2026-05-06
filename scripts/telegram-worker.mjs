@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import os from "node:os";
@@ -51,9 +52,11 @@ const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_V
 const telegramTextChunkChars = Number.parseInt(process.env.TELEGRAM_TEXT_CHUNK_CHARS ?? "3600", 10);
 const telegramDocumentMaxChars = Number.parseInt(process.env.TELEGRAM_DOCUMENT_MAX_CHARS ?? "120000", 10);
 const telegramVideoMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_MAX_MB ?? "500", 10);
-const telegramVideoDirectMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_DIRECT_MAX_MB ?? "25", 10);
+const telegramVideoDirectMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_DIRECT_MAX_MB ?? "500", 10);
 const telegramVideoFrameCount = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_COUNT ?? "6", 10);
 const telegramVideoFrameMaxWidth = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_MAX_WIDTH ?? "960", 10);
+const modelMediaHostDir = path.resolve(process.env.UVB_MODEL_MEDIA_HOST_DIR ?? path.join(root, ".uvb", "model-media"));
+const modelMediaContainerDir = (process.env.UVB_MODEL_MEDIA_CONTAINER_DIR ?? "/uvb-media").replace(/\/+$/, "");
 const telegramTtsChunkChars = Number.parseInt(
   process.env.TELEGRAM_TTS_CHUNK_CHARS ?? process.env.TELEGRAM_TTS_MAX_CHARS ?? "4200",
   10
@@ -343,8 +346,20 @@ async function blobToDataUrl(blob) {
   return `data:${mediaType};base64,${buffer.toString("base64")}`;
 }
 
-function bufferToDataUrl(buffer, mediaType = "application/octet-stream") {
-  return `data:${mediaType};base64,${buffer.toString("base64")}`;
+function sanitizeMediaExtension(extension) {
+  const cleanExtension = String(extension || ".mp4").toLowerCase().replace(/[^a-z0-9.]/g, "");
+  return cleanExtension.startsWith(".") && cleanExtension.length > 1 ? cleanExtension : ".mp4";
+}
+
+async function writeModelMediaFile(buffer, extension) {
+  await mkdir(modelMediaHostDir, { recursive: true });
+  const fileName = `${Date.now()}-${randomUUID()}${sanitizeMediaExtension(extension)}`;
+  const hostPath = path.join(modelMediaHostDir, fileName);
+  await writeFile(hostPath, buffer);
+  return {
+    hostPath,
+    containerUrl: `file://${modelMediaContainerDir}/${fileName}`,
+  };
 }
 
 function isTextDocument(document) {
@@ -718,11 +733,10 @@ async function buildTelegramVideoContent(message) {
     const directMaxBytes = (Number.isFinite(telegramVideoDirectMaxMb) && telegramVideoDirectMaxMb > 0
       ? telegramVideoDirectMaxMb
       : 25) * 1024 * 1024;
-    const mediaType = file.blob.type || video.mime_type || "video/mp4";
-
     if (inputBytes.length > directMaxBytes) {
       return { content: fallbackContent, fallbackContent };
     }
+    const modelMedia = await writeModelMediaFile(inputBytes, inputExtension);
 
     return {
       content: [
@@ -731,9 +745,10 @@ async function buildTelegramVideoContent(message) {
           type: "text",
           text: "Watch the attached video directly. Use the transcript and sampled-frame timestamps as supporting context.",
         },
-        { type: "video_url", video_url: { url: bufferToDataUrl(inputBytes, mediaType) } },
+        { type: "video_url", video_url: { url: modelMedia.containerUrl } },
       ],
       fallbackContent,
+      cleanupPaths: [modelMedia.hostPath],
     };
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
@@ -920,6 +935,7 @@ async function handleMessage(message) {
   let text = message.text?.trim() ?? "";
   let content = null;
   let fallbackContent = null;
+  let cleanupPaths = [];
   let logText = text;
   let messageType = "text";
 
@@ -938,6 +954,7 @@ async function handleMessage(message) {
       if (videoContent && typeof videoContent === "object" && "content" in videoContent) {
         content = videoContent.content;
         fallbackContent = videoContent.fallbackContent || null;
+        cleanupPaths = Array.isArray(videoContent.cleanupPaths) ? videoContent.cleanupPaths : [];
       } else {
         content = videoContent;
       }
@@ -1013,6 +1030,8 @@ async function handleMessage(message) {
     const messageText = error instanceof Error ? error.message : "Unknown Telegram bridge error.";
     console.error(`[uvb-telegram] Message handling failed for chat ${chatId}: ${messageText}`);
     await sendMessage(chatId, `UVB bridge error: ${messageText}`);
+  } finally {
+    await Promise.all(cleanupPaths.map((cleanupPath) => rm(cleanupPath, { force: true }).catch(() => undefined)));
   }
 }
 
