@@ -5,12 +5,15 @@ import { motion } from "framer-motion";
 import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
+  CheckIcon,
   MicrophoneIcon,
   PauseIcon,
   PlayIcon,
+  PlusIcon,
   StopIcon,
+  TrashIcon,
 } from "@heroicons/react/24/outline";
-import { Activity, FileAudio, Gauge, Waves } from "lucide-react";
+import { Activity, Brain, FileAudio, Gauge, SlidersHorizontal, Sparkles, Waves } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
 import { loadVoiceSettings, type VoiceSettings } from "@/lib/voiceSettings";
 
@@ -24,11 +27,106 @@ interface AudioAnalysis {
   waveform: number[];
 }
 
+type CloneProvider = "kokoro" | "chatterbox" | "moss" | "vibevoice" | "rvc" | "custom";
+
+interface VoiceCloneProfile {
+  id: string;
+  name: string;
+  provider: CloneProvider;
+  status: "draft" | "ready" | "training" | "needs-samples";
+  voiceId: string;
+  referenceName: string;
+  referenceDataUrl: string;
+  referenceSeconds: number;
+  stability: number;
+  similarity: number;
+  speed: number;
+  pitch: number;
+  notes: string;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+const VOICE_CLONE_STORAGE_KEY = "uvb:voice-clone-profiles";
+const CLONE_PROVIDERS: Array<{ id: CloneProvider; label: string; desc: string }> = [
+  { id: "kokoro", label: "Kokoro Fast", desc: "Fast local voice endpoint / current UVB default." },
+  { id: "chatterbox", label: "Chatterbox Turbo", desc: "Expressive cloning target for conversational voice." },
+  { id: "moss", label: "MOSS TTS", desc: "Local profile endpoint for higher-control synthesis." },
+  { id: "vibevoice", label: "VibeVoice", desc: "Realtime/long-form voice option groundwork." },
+  { id: "rvc", label: "RVC Chain", desc: "Conversion-stage profile for future voice conversion." },
+  { id: "custom", label: "Custom", desc: "Bring-your-own local clone provider." },
+];
+
 function formatDuration(seconds: number) {
   if (!Number.isFinite(seconds)) return "0:00";
   const minutes = Math.floor(seconds / 60);
   const wholeSeconds = Math.floor(seconds % 60);
   return `${minutes}:${String(wholeSeconds).padStart(2, "0")}`;
+}
+
+function generateId() {
+  return Math.random().toString(36).slice(2, 11);
+}
+
+function safeText(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function normalizeCloneProfile(profile: Partial<VoiceCloneProfile>): VoiceCloneProfile {
+  const provider = CLONE_PROVIDERS.some((item) => item.id === profile.provider)
+    ? (profile.provider as CloneProvider)
+    : "kokoro";
+  const status =
+    profile.status === "ready" || profile.status === "training" || profile.status === "needs-samples"
+      ? profile.status
+      : "draft";
+  const clamp = (value: unknown, fallback: number, min: number, max: number) => {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? Math.min(max, Math.max(min, numberValue)) : fallback;
+  };
+
+  return {
+    id: safeText(profile.id) || generateId(),
+    name: safeText(profile.name, "New Voice Clone"),
+    provider,
+    status,
+    voiceId: safeText(profile.voiceId),
+    referenceName: safeText(profile.referenceName),
+    referenceDataUrl: safeText(profile.referenceDataUrl),
+    referenceSeconds: clamp(profile.referenceSeconds, 0, 0, 3600),
+    stability: clamp(profile.stability, 0.55, 0, 1),
+    similarity: clamp(profile.similarity, 0.75, 0, 1),
+    speed: clamp(profile.speed, 1, 0.5, 1.8),
+    pitch: clamp(profile.pitch, 0, -12, 12),
+    notes: safeText(profile.notes),
+    tags: Array.isArray(profile.tags) ? profile.tags.map((tag) => safeText(tag)).filter(Boolean) : [],
+    createdAt: typeof profile.createdAt === "number" ? profile.createdAt : Date.now(),
+    updatedAt: typeof profile.updatedAt === "number" ? profile.updatedAt : Date.now(),
+  };
+}
+
+function loadCloneProfiles(): VoiceCloneProfile[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(VOICE_CLONE_STORAGE_KEY) || "[]") as Partial<VoiceCloneProfile>[];
+    return Array.isArray(parsed) ? parsed.map(normalizeCloneProfile) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCloneProfiles(profiles: VoiceCloneProfile[]) {
+  window.localStorage.setItem(VOICE_CLONE_STORAGE_KEY, JSON.stringify(profiles.map(normalizeCloneProfile)));
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read reference sample."));
+    reader.readAsDataURL(blob);
+  });
 }
 
 function db(value: number) {
@@ -92,6 +190,24 @@ export default function VoiceAnalysisPage() {
   const [transcript, setTranscript] = useState("");
   const [status, setStatus] = useState("Record or upload audio to analyze locally.");
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [cloneProfiles, setCloneProfiles] = useState<VoiceCloneProfile[]>(loadCloneProfiles);
+  const [activeCloneId, setActiveCloneId] = useState("");
+  const [cloneDraft, setCloneDraft] = useState<VoiceCloneProfile>(() =>
+    normalizeCloneProfile({
+      name: "Sophia Clone Draft",
+      provider: "kokoro",
+      voiceId: voiceSettings.ttsVoice,
+      status: "draft",
+      notes: "Groundwork profile. Add reference samples, tune controls, then map this profile to the target cloning backend.",
+      tags: ["sophia", "local"],
+    })
+  );
+  const [cloneTestText, setCloneTestText] = useState(
+    "Hello Richard. This is Sophia's local voice clone profile test inside UVB."
+  );
+  const [cloneStatus, setCloneStatus] = useState("Voice clone profiles are stored locally.");
+  const [cloneTestAudioUrl, setCloneTestAudioUrl] = useState("");
+  const [isTestingClone, setIsTestingClone] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -100,9 +216,10 @@ export default function VoiceAnalysisPage() {
   useEffect(() => {
     return () => {
       if (audioUrl) URL.revokeObjectURL(audioUrl);
+      if (cloneTestAudioUrl) URL.revokeObjectURL(cloneTestAudioUrl);
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
-  }, [audioUrl]);
+  }, [audioUrl, cloneTestAudioUrl]);
 
   const loadAudioBlob = async (blob: Blob, name: string) => {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
@@ -176,6 +293,104 @@ export default function VoiceAnalysisPage() {
       setStatus(message);
     } finally {
       setIsTranscribing(false);
+    }
+  };
+
+  const updateCloneDraft = (updates: Partial<VoiceCloneProfile>) => {
+    setCloneDraft((current) => normalizeCloneProfile({ ...current, ...updates, updatedAt: Date.now() }));
+    setCloneStatus("Unsaved clone profile changes.");
+  };
+
+  const attachCurrentAudioToClone = async () => {
+    if (!audioBlob) {
+      setCloneStatus("Record or upload a reference sample first.");
+      return;
+    }
+    try {
+      const referenceDataUrl = await blobToDataUrl(audioBlob);
+      updateCloneDraft({
+        referenceDataUrl,
+        referenceName: fileName || "reference-sample.webm",
+        referenceSeconds: analysis?.durationSeconds ?? 0,
+        status: analysis?.durationSeconds && analysis.durationSeconds >= 10 ? "ready" : "needs-samples",
+      });
+      setCloneStatus("Attached current audio as the clone reference sample.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not attach reference sample.";
+      setCloneStatus(message);
+    }
+  };
+
+  const saveCloneProfile = () => {
+    const nextProfile = normalizeCloneProfile({ ...cloneDraft, updatedAt: Date.now() });
+    setCloneProfiles((current) => {
+      const exists = current.some((profile) => profile.id === nextProfile.id);
+      const nextProfiles = exists
+        ? current.map((profile) => (profile.id === nextProfile.id ? nextProfile : profile))
+        : [nextProfile, ...current];
+      saveCloneProfiles(nextProfiles);
+      return nextProfiles;
+    });
+    setActiveCloneId(nextProfile.id);
+    setCloneStatus(`Saved ${nextProfile.name}.`);
+  };
+
+  const loadCloneProfile = (profile: VoiceCloneProfile) => {
+    setCloneDraft(profile);
+    setActiveCloneId(profile.id);
+    setCloneStatus(`Loaded ${profile.name}.`);
+  };
+
+  const newCloneProfile = () => {
+    const profile = normalizeCloneProfile({
+      name: "New Voice Clone",
+      provider: "kokoro",
+      voiceId: voiceSettings.ttsVoice,
+      tags: ["local"],
+    });
+    setCloneDraft(profile);
+    setActiveCloneId("");
+    setCloneStatus("Started a new clone profile.");
+  };
+
+  const deleteCloneProfile = (profileId: string) => {
+    setCloneProfiles((current) => {
+      const nextProfiles = current.filter((profile) => profile.id !== profileId);
+      saveCloneProfiles(nextProfiles);
+      return nextProfiles;
+    });
+    if (activeCloneId === profileId) {
+      newCloneProfile();
+    }
+    setCloneStatus("Deleted clone profile.");
+  };
+
+  const testCloneProfile = async () => {
+    setIsTestingClone(true);
+    setCloneStatus("Rendering test voice through the current local TTS endpoint...");
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: cloneTestText,
+          endpoint: voiceSettings.ttsUrl,
+          voice: cloneDraft.voiceId || voiceSettings.ttsVoice,
+        }),
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error || `TTS failed with ${response.status}.`);
+      }
+      const blob = await response.blob();
+      if (cloneTestAudioUrl) URL.revokeObjectURL(cloneTestAudioUrl);
+      setCloneTestAudioUrl(URL.createObjectURL(blob));
+      setCloneStatus("Clone profile test audio ready.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Clone test failed.";
+      setCloneStatus(message);
+    } finally {
+      setIsTestingClone(false);
     }
   };
 
@@ -304,6 +519,231 @@ export default function VoiceAnalysisPage() {
               Audio metrics appear after recording or upload.
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="uvb-card space-y-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="mb-2 flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-uvb-neon-green" />
+              <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                Voice Clone Lab
+              </h3>
+            </div>
+            <p className="max-w-3xl text-xs leading-relaxed text-uvb-text-secondary">
+              Build local clone profiles before they are sent to a cloning backend. Profiles keep reference samples,
+              provider targets, tuning controls, tags, and test phrases in browser storage.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={newCloneProfile} className="btn-ghost inline-flex items-center gap-2 text-sm">
+              <PlusIcon className="h-4 w-4" />
+              New Profile
+            </button>
+            <button onClick={saveCloneProfile} className="btn-primary inline-flex items-center gap-2 text-sm">
+              <CheckIcon className="h-4 w-4" />
+              Save Profile
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
+          <div className="space-y-2">
+            {cloneProfiles.length ? (
+              cloneProfiles.map((profile) => (
+                <button
+                  key={profile.id}
+                  onClick={() => loadCloneProfile(profile)}
+                  className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                    activeCloneId === profile.id
+                      ? "border-uvb-neon-green/30 bg-uvb-deep-teal/30"
+                      : "border-uvb-border/30 bg-uvb-dark-gray/40 hover:border-uvb-steel-blue/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-semibold text-uvb-text-primary">
+                      {profile.name}
+                    </span>
+                    <span className="rounded-full border border-uvb-border/30 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-uvb-text-muted">
+                      {profile.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-uvb-text-muted">
+                    {CLONE_PROVIDERS.find((item) => item.id === profile.provider)?.label ?? profile.provider}
+                  </p>
+                </button>
+              ))
+            ) : (
+              <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4 text-sm text-uvb-text-muted">
+                No clone profiles saved yet.
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+              <div>
+                <label className="mb-1.5 block text-xs text-uvb-text-muted">Profile Name</label>
+                <input
+                  value={cloneDraft.name}
+                  onChange={(event) => updateCloneDraft({ name: event.target.value })}
+                  className="input-field"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-uvb-text-muted">Provider Target</label>
+                <select
+                  value={cloneDraft.provider}
+                  onChange={(event) => updateCloneDraft({ provider: event.target.value as CloneProvider })}
+                  className="input-field"
+                >
+                  {CLONE_PROVIDERS.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-uvb-text-muted">Voice ID / Slug</label>
+                <input
+                  value={cloneDraft.voiceId}
+                  onChange={(event) => updateCloneDraft({ voiceId: event.target.value })}
+                  className="input-field"
+                  placeholder={voiceSettings.ttsVoice}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+              <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-uvb-text-primary">Reference Sample</h4>
+                    <p className="text-xs text-uvb-text-muted">
+                      {cloneDraft.referenceName
+                        ? `${cloneDraft.referenceName} · ${formatDuration(cloneDraft.referenceSeconds)}`
+                        : "Attach the current recording/upload as a clone reference."}
+                    </p>
+                  </div>
+                  <button onClick={attachCurrentAudioToClone} className="btn-ghost text-sm">
+                    Use Current Audio
+                  </button>
+                </div>
+                {cloneDraft.referenceDataUrl ? (
+                  <audio src={cloneDraft.referenceDataUrl} controls className="w-full" />
+                ) : (
+                  <div className="flex min-h-16 items-center justify-center rounded-lg border border-dashed border-uvb-border/40 text-xs text-uvb-text-muted">
+                    No reference sample attached.
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Brain className="h-4 w-4 text-uvb-steel-blue" />
+                  <h4 className="text-sm font-semibold text-uvb-text-primary">Readiness</h4>
+                </div>
+                <div className="space-y-2 text-xs text-uvb-text-secondary">
+                  <p>Reference: {cloneDraft.referenceDataUrl ? "attached" : "missing"}</p>
+                  <p>Length: {formatDuration(cloneDraft.referenceSeconds)}</p>
+                  <p>Provider: {CLONE_PROVIDERS.find((item) => item.id === cloneDraft.provider)?.label}</p>
+                  <p>Status: {cloneDraft.status}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+              {[
+                ["Stability", "stability", 0, 1, 0.05],
+                ["Similarity", "similarity", 0, 1, 0.05],
+                ["Speed", "speed", 0.5, 1.8, 0.05],
+                ["Pitch", "pitch", -12, 12, 1],
+              ].map(([label, key, min, max, step]) => (
+                <div key={String(key)} className="rounded-lg border border-uvb-border/20 bg-uvb-dark-gray/40 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-xs text-uvb-text-muted">{label}</span>
+                    <span className="text-xs text-uvb-text-primary">
+                      {Number(cloneDraft[key as keyof VoiceCloneProfile]).toFixed(key === "pitch" ? 0 : 2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={Number(min)}
+                    max={Number(max)}
+                    step={Number(step)}
+                    value={Number(cloneDraft[key as keyof VoiceCloneProfile])}
+                    onChange={(event) =>
+                      updateCloneDraft({ [key as string]: Number(event.target.value) } as Partial<VoiceCloneProfile>)
+                    }
+                    className="w-full accent-uvb-neon-green"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs text-uvb-text-muted">Tags</label>
+                <input
+                  value={cloneDraft.tags.join(", ")}
+                  onChange={(event) =>
+                    updateCloneDraft({
+                      tags: event.target.value
+                        .split(",")
+                        .map((tag) => tag.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  className="input-field"
+                  placeholder="sophia, expressive, local"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-uvb-text-muted">Backend Notes</label>
+                <input
+                  value={cloneDraft.notes}
+                  onChange={(event) => updateCloneDraft({ notes: event.target.value })}
+                  className="input-field"
+                  placeholder="Training notes, consent, dataset notes, target endpoint..."
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-uvb-steel-blue" />
+                <h4 className="text-sm font-semibold text-uvb-text-primary">Profile Test</h4>
+              </div>
+              <textarea
+                value={cloneTestText}
+                onChange={(event) => setCloneTestText(event.target.value)}
+                className="input-field min-h-20 resize-y"
+              />
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <button
+                  onClick={testCloneProfile}
+                  disabled={isTestingClone || !cloneTestText.trim()}
+                  className="btn-primary inline-flex items-center gap-2 text-sm disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <PlayIcon className="h-4 w-4" />
+                  {isTestingClone ? "Rendering" : "Render Test"}
+                </button>
+                {cloneTestAudioUrl && <audio src={cloneTestAudioUrl} controls className="h-9" />}
+                <span className="text-xs text-uvb-text-muted">{cloneStatus}</span>
+                {activeCloneId && (
+                  <button
+                    onClick={() => deleteCloneProfile(activeCloneId)}
+                    className="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-300 hover:bg-red-500/10"
+                  >
+                    <TrashIcon className="h-3.5 w-3.5" />
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
