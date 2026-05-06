@@ -15,7 +15,8 @@ type ChatRole = "system" | "user" | "assistant";
 
 type ChatContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } };
+  | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
+  | { type: "video_url"; video_url: { url: string } };
 
 interface ChatMessage {
   role: ChatRole;
@@ -61,6 +62,7 @@ function hasMessageContent(content: ChatMessage["content"]) {
   return content.some((part) => {
     if (part.type === "text") return part.text.trim().length > 0;
     if (part.type === "image_url") return part.image_url.url.trim().length > 0;
+    if (part.type === "video_url") return part.video_url.url.trim().length > 0;
     return false;
   });
 }

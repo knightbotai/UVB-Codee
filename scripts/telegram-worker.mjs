@@ -51,6 +51,7 @@ const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_V
 const telegramTextChunkChars = Number.parseInt(process.env.TELEGRAM_TEXT_CHUNK_CHARS ?? "3600", 10);
 const telegramDocumentMaxChars = Number.parseInt(process.env.TELEGRAM_DOCUMENT_MAX_CHARS ?? "120000", 10);
 const telegramVideoMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_MAX_MB ?? "500", 10);
+const telegramVideoDirectMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_DIRECT_MAX_MB ?? "25", 10);
 const telegramVideoFrameCount = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_COUNT ?? "6", 10);
 const telegramVideoFrameMaxWidth = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_MAX_WIDTH ?? "960", 10);
 const telegramTtsChunkChars = Number.parseInt(
@@ -342,6 +343,10 @@ async function blobToDataUrl(blob) {
   return `data:${mediaType};base64,${buffer.toString("base64")}`;
 }
 
+function bufferToDataUrl(buffer, mediaType = "application/octet-stream") {
+  return `data:${mediaType};base64,${buffer.toString("base64")}`;
+}
+
 function isTextDocument(document) {
   const mimeType = String(document?.mime_type || "").toLowerCase();
   const name = String(document?.file_name || "").toLowerCase();
@@ -532,6 +537,43 @@ async function extractVideoFrames(inputPath, tempDir, durationSeconds) {
   return frames;
 }
 
+async function extractVideoStoryboardSheet(inputPath, tempDir, durationSeconds) {
+  try {
+    const frameCount = Number.isFinite(telegramVideoFrameCount)
+      ? Math.min(Math.max(telegramVideoFrameCount, 1), 12)
+      : 6;
+    const columns = Math.min(3, frameCount);
+    const rows = Math.ceil(frameCount / columns);
+    const maxWidth = Number.isFinite(telegramVideoFrameMaxWidth) && telegramVideoFrameMaxWidth >= 320
+      ? telegramVideoFrameMaxWidth
+      : 960;
+    const interval = Number.isFinite(durationSeconds) && durationSeconds > 0
+      ? Math.max(durationSeconds / frameCount, 0.1)
+      : 1;
+    const sheetPath = path.join(tempDir, "storyboard-sheet.jpg");
+
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inputPath,
+      "-vf",
+      `fps=1/${interval},scale=${Math.floor(maxWidth / columns)}:-2:force_original_aspect_ratio=decrease,tile=${columns}x${rows}:margin=12:padding=8:color=black,scale=${maxWidth}:-2`,
+      "-frames:v",
+      "1",
+      "-q:v",
+      "5",
+      sheetPath,
+    ]);
+
+    const sheetBytes = await readFile(sheetPath);
+    return `data:image/jpeg;base64,${sheetBytes.toString("base64")}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown storyboard sheet error";
+    console.error(`[uvb-telegram] Could not extract video storyboard sheet: ${message}`);
+    return "";
+  }
+}
+
 async function transcribeTelegramVoice(message) {
   const voice = message.voice ?? message.audio;
   if (!voice?.file_id) return "";
@@ -630,7 +672,8 @@ async function buildTelegramVideoContent(message) {
   const audioPath = path.join(tempDir, "audio.mp3");
 
   try {
-    await writeFile(inputPath, Buffer.from(await file.blob.arrayBuffer()));
+    const inputBytes = Buffer.from(await file.blob.arrayBuffer());
+    await writeFile(inputPath, inputBytes);
     const durationSeconds = await probeVideoDuration(inputPath, Number(video.duration || 0));
     await runFfmpeg(["-y", "-i", inputPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "96k", audioPath]);
 
@@ -643,7 +686,10 @@ async function buildTelegramVideoContent(message) {
       transcript = `[Video audio transcription failed: ${messageText}]`;
     }
 
-    const frames = await extractVideoFrames(inputPath, tempDir, durationSeconds);
+    const [frames, storyboardSheet] = await Promise.all([
+      extractVideoFrames(inputPath, tempDir, durationSeconds),
+      extractVideoStoryboardSheet(inputPath, tempDir, durationSeconds),
+    ]);
 
     const caption = message.caption?.trim();
     const videoName = message.document?.file_name || file.name || "telegram-video";
@@ -662,15 +708,33 @@ async function buildTelegramVideoContent(message) {
       .join("\n\n");
     const prompt = `${metadata}\n\nPlease analyze the essence of this video using the ordered sampled frames as a timeline and the audio transcript as narrative context. Call out visual progression, notable objects/actions, mood, scene changes, and anything uncertain.`;
 
-    if (!frames.length) return prompt;
+    const fallbackContent = storyboardSheet
+      ? [
+          { type: "text", text: prompt },
+          { type: "text", text: "Fallback storyboard contact sheet containing the sampled video timeline." },
+          { type: "image_url", image_url: { url: storyboardSheet, detail: "auto" } },
+        ]
+      : prompt;
+    const directMaxBytes = (Number.isFinite(telegramVideoDirectMaxMb) && telegramVideoDirectMaxMb > 0
+      ? telegramVideoDirectMaxMb
+      : 25) * 1024 * 1024;
+    const mediaType = file.blob.type || video.mime_type || "video/mp4";
 
-    return [
-      { type: "text", text: prompt },
-      ...frames.flatMap((frame) => [
-        { type: "text", text: `Reference frame ${frame.index} at ${frame.timestamp}.` },
-        { type: "image_url", image_url: { url: frame.dataUrl, detail: "auto" } },
-      ]),
-    ];
+    if (inputBytes.length > directMaxBytes) {
+      return { content: fallbackContent, fallbackContent };
+    }
+
+    return {
+      content: [
+        { type: "text", text: prompt },
+        {
+          type: "text",
+          text: "Watch the attached video directly. Use the transcript and sampled-frame timestamps as supporting context.",
+        },
+        { type: "video_url", video_url: { url: bufferToDataUrl(inputBytes, mediaType) } },
+      ],
+      fallbackContent,
+    };
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -855,6 +919,7 @@ async function handleMessage(message) {
 
   let text = message.text?.trim() ?? "";
   let content = null;
+  let fallbackContent = null;
   let logText = text;
   let messageType = "text";
 
@@ -868,8 +933,14 @@ async function handleMessage(message) {
     }
 
     if (!text && getVideoAttachment(message)) {
-      await sendMessage(chatId, "Video received. Extracting audio and a reference frame locally...");
-      content = await buildTelegramVideoContent(message);
+      await sendMessage(chatId, "Video received. Extracting audio and preparing direct video vision locally...");
+      const videoContent = await buildTelegramVideoContent(message);
+      if (videoContent && typeof videoContent === "object" && "content" in videoContent) {
+        content = videoContent.content;
+        fallbackContent = videoContent.fallbackContent || null;
+      } else {
+        content = videoContent;
+      }
       logText = message.caption?.trim() || "[Telegram video]";
       messageType = "video";
     }
@@ -908,7 +979,19 @@ async function handleMessage(message) {
 
     await sendAction(chatId, "typing");
     await sendMessage(chatId, "Working on it through UVB...");
-    const answer = await askKnightBot(chatId, content || text, logText);
+    let answer;
+    try {
+      answer = await askKnightBot(chatId, content || text, logText);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Unknown UVB chat error.";
+      if (!fallbackContent || messageType !== "video") {
+        throw error;
+      }
+
+      console.error(`[uvb-telegram] Direct video routing failed for chat ${chatId}; retrying storyboard fallback: ${messageText}`);
+      await sendMessage(chatId, "Direct video vision was rejected by the local model, so I am retrying with the storyboard fallback...");
+      answer = await askKnightBot(chatId, fallbackContent, `${logText} [storyboard fallback]`);
+    }
     logStage(`Preparing Telegram reply for chat ${chatId}; answer length ${answer.length} chars.`);
     await logTelegramChatTurn(message, logText, answer, messageType);
     if (telegramSendTextReplies) {
