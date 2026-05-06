@@ -9,7 +9,7 @@ import {
   EyeIcon,
   PaintBrushIcon,
 } from "@heroicons/react/24/outline";
-import { Shield, Palette, Brain } from "lucide-react";
+import { Shield, Palette, Brain, Bot, Code2 } from "lucide-react";
 import Image from "next/image";
 import {
   DEFAULT_MODEL_SETTINGS,
@@ -28,6 +28,12 @@ import {
   saveIdentitySettings,
   type IdentitySettings,
 } from "@/lib/identitySettings";
+import {
+  DEFAULT_AGENT_TOOL_SETTINGS,
+  loadAgentToolSettings,
+  saveAgentToolSettings,
+  type AgentToolSettings,
+} from "@/lib/agentToolSettings";
 
 const MODEL_PRESETS = [
   {
@@ -76,6 +82,10 @@ export default function SettingsPage() {
   const [identitySettings, setIdentitySettings] = useState<IdentitySettings>(() =>
     loadIdentitySettings()
   );
+  const [agentToolSettings, setAgentToolSettings] = useState<AgentToolSettings>(() =>
+    loadAgentToolSettings()
+  );
+  const [agentToolStatus, setAgentToolStatus] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
   const userPortraitInputRef = useRef<HTMLInputElement>(null);
   const assistantPortraitInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +95,7 @@ export default function SettingsPage() {
     { id: "voice", label: "Voice & Audio", icon: CpuChipIcon },
     { id: "appearance", label: "Appearance", icon: Palette },
     { id: "security", label: "Security", icon: Shield },
+    { id: "tools", label: "Agent Tools", icon: Bot },
     { id: "ai", label: "AI Settings", icon: Brain },
     { id: "notifications", label: "Notifications", icon: BellIcon },
   ];
@@ -102,6 +113,16 @@ export default function SettingsPage() {
   const updateIdentitySettings = (updates: Partial<IdentitySettings>) => {
     setIdentitySettings((current) => ({ ...current, ...updates }));
     setProfileStatus("");
+  };
+
+  const updateAgentToolSettings = (updates: Partial<AgentToolSettings>) => {
+    setAgentToolSettings((current) => ({ ...current, ...updates }));
+    setAgentToolStatus("");
+  };
+
+  const saveCurrentAgentToolSettings = () => {
+    saveAgentToolSettings(agentToolSettings);
+    setAgentToolStatus("Saved Sophia agent tool permissions locally.");
   };
 
   const saveCurrentIdentitySettings = () => {
@@ -218,6 +239,7 @@ export default function SettingsPage() {
       exportedAt: new Date().toISOString(),
       app: "UVB KnightBot",
       identitySettings,
+      agentToolSettings,
       modelSettings,
       voiceSettings,
     };
@@ -239,6 +261,7 @@ export default function SettingsPage() {
         modelSettings?: Partial<ModelSettings>;
         voiceSettings?: Partial<VoiceSettings>;
         identitySettings?: Partial<IdentitySettings>;
+        agentToolSettings?: Partial<AgentToolSettings>;
       };
 
       if (data.modelSettings) {
@@ -267,6 +290,15 @@ export default function SettingsPage() {
         const nextIdentitySettings = { ...identitySettings, ...data.identitySettings };
         setIdentitySettings(nextIdentitySettings);
         saveIdentitySettings(nextIdentitySettings);
+      }
+
+      if (data.agentToolSettings) {
+        const nextAgentToolSettings = {
+          ...DEFAULT_AGENT_TOOL_SETTINGS,
+          ...data.agentToolSettings,
+        };
+        setAgentToolSettings(nextAgentToolSettings);
+        saveAgentToolSettings(nextAgentToolSettings);
       }
 
       setProfileStatus("Imported profile and applied settings.");
@@ -833,6 +865,236 @@ export default function SettingsPage() {
                         </span>
                       )}
                     </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === "tools" && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="space-y-6"
+              >
+                <div className="uvb-card">
+                  <div className="mb-4 flex items-center gap-2">
+                    <Bot className="h-5 w-5 text-uvb-neon-green" />
+                    <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                      Sophia Agent Tools
+                    </h3>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {[
+                      ["browserUseEnabled", "Browser use", "Open pages, inspect UI, and operate browser workflows."],
+                      ["webResearchEnabled", "Web research", "Search and cite sources for current information."],
+                      ["localComputerUseEnabled", "Local computer use", "Operate local UI surfaces when explicitly allowed."],
+                      ["codingTasksEnabled", "Coding tasks", "Read code, propose patches, and run focused checks."],
+                      ["terminalEnabled", "Terminal commands", "Run shell commands inside approved scope."],
+                      ["fileEditsEnabled", "File edits", "Write code/files inside the configured workspace."],
+                      ["gitEnabled", "Git operations", "Stage, commit, push, and inspect repository history."],
+                      ["networkEnabled", "Network access", "Allow HTTP/API calls for research and provider fallbacks."],
+                    ].map(([key, label, description]) => (
+                      <button
+                        key={key}
+                        onClick={() =>
+                          updateAgentToolSettings({
+                            [key]: !agentToolSettings[key as keyof AgentToolSettings],
+                          } as Partial<AgentToolSettings>)
+                        }
+                        className={`rounded-lg border p-3 text-left transition-colors ${
+                          agentToolSettings[key as keyof AgentToolSettings]
+                            ? "border-uvb-neon-green/30 bg-uvb-deep-teal/20"
+                            : "border-uvb-border/30 bg-uvb-dark-gray/40 hover:border-uvb-steel-blue/40"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm font-semibold text-uvb-text-primary">{label}</span>
+                          <span
+                            className={`h-2.5 w-2.5 rounded-full ${
+                              agentToolSettings[key as keyof AgentToolSettings]
+                                ? "bg-uvb-neon-green"
+                                : "bg-uvb-text-muted"
+                            }`}
+                          />
+                        </div>
+                        <p className="mt-1 text-xs text-uvb-text-muted">{description}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="uvb-card">
+                  <h3 className="mb-4 text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                    Permission Model
+                  </h3>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Approval Mode
+                      </label>
+                      <select
+                        value={agentToolSettings.approvalMode}
+                        onChange={(event) =>
+                          updateAgentToolSettings({
+                            approvalMode: event.target.value as AgentToolSettings["approvalMode"],
+                          })
+                        }
+                        className="input-field"
+                      >
+                        <option value="ask-every-time">Ask every time</option>
+                        <option value="read-only-auto">Auto approve read-only actions</option>
+                        <option value="workspace-auto">Auto approve approved workspace actions</option>
+                        <option value="trusted-local">Trusted local mode</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Workspace Root
+                      </label>
+                      <input
+                        value={agentToolSettings.workspaceRoot}
+                        onChange={(event) =>
+                          updateAgentToolSettings({ workspaceRoot: event.target.value })
+                        }
+                        className="input-field"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Allowed Domains
+                      </label>
+                      <textarea
+                        value={agentToolSettings.allowedDomains}
+                        onChange={(event) =>
+                          updateAgentToolSettings({ allowedDomains: event.target.value })
+                        }
+                        className="input-field min-h-24 resize-y"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Blocked Paths / Secrets
+                      </label>
+                      <textarea
+                        value={agentToolSettings.blockedPaths}
+                        onChange={(event) =>
+                          updateAgentToolSettings({ blockedPaths: event.target.value })
+                        }
+                        className="input-field min-h-24 resize-y"
+                      />
+                    </div>
+                  </div>
+                  <label className="mt-4 flex items-center gap-3 rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-3">
+                    <input
+                      type="checkbox"
+                      checked={agentToolSettings.auditLogEnabled}
+                      onChange={(event) =>
+                        updateAgentToolSettings({ auditLogEnabled: event.target.checked })
+                      }
+                      className="accent-uvb-neon-green"
+                    />
+                    <span>
+                      <span className="block text-sm text-uvb-text-primary">Audit log every tool action</span>
+                      <span className="text-xs text-uvb-text-muted">
+                        Keep a readable trail before Sophia gets broader local execution power.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="uvb-card">
+                  <div className="mb-4 flex items-center gap-2">
+                    <Code2 className="h-5 w-5 text-uvb-steel-blue" />
+                    <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                      Coding Provider Fallback
+                    </h3>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Provider
+                      </label>
+                      <select
+                        value={agentToolSettings.codingProvider}
+                        onChange={(event) =>
+                          updateAgentToolSettings({
+                            codingProvider: event.target.value as AgentToolSettings["codingProvider"],
+                            providerBaseUrl:
+                              event.target.value === "kilo-gateway"
+                                ? "https://api.kilo.ai/api/gateway"
+                                : agentToolSettings.providerBaseUrl,
+                          })
+                        }
+                        className="input-field"
+                      >
+                        <option value="local-uvb">Local UVB model</option>
+                        <option value="kilo-gateway">Kilo Code Gateway</option>
+                        <option value="openai-compatible">Custom OpenAI-compatible</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Base URL
+                      </label>
+                      <input
+                        value={agentToolSettings.providerBaseUrl}
+                        onChange={(event) =>
+                          updateAgentToolSettings({ providerBaseUrl: event.target.value })
+                        }
+                        className="input-field"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Model
+                      </label>
+                      <input
+                        value={agentToolSettings.providerModel}
+                        onChange={(event) =>
+                          updateAgentToolSettings({ providerModel: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="Leave blank to choose at runtime"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        API Key
+                      </label>
+                      <input
+                        type="password"
+                        value={agentToolSettings.providerApiKey}
+                        onChange={(event) =>
+                          updateAgentToolSettings({ providerApiKey: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="Optional for free/BYOK gateway modes"
+                      />
+                    </div>
+                  </div>
+                  <label className="mt-4 flex items-center gap-3 rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-3">
+                    <input
+                      type="checkbox"
+                      checked={agentToolSettings.preferFreeModels}
+                      onChange={(event) =>
+                        updateAgentToolSettings({ preferFreeModels: event.target.checked })
+                      }
+                      className="accent-uvb-neon-green"
+                    />
+                    <span>
+                      <span className="block text-sm text-uvb-text-primary">Prefer free models when available</span>
+                      <span className="text-xs text-uvb-text-muted">
+                        Useful for Kilo Gateway fallback before burning paid credits.
+                      </span>
+                    </span>
+                  </label>
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button onClick={saveCurrentAgentToolSettings} className="btn-primary">
+                      Save Agent Tool Settings
+                    </button>
+                    {agentToolStatus && (
+                      <span className="text-xs text-uvb-neon-green">{agentToolStatus}</span>
+                    )}
                   </div>
                 </div>
               </motion.div>
