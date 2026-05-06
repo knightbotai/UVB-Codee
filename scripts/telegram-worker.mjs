@@ -28,6 +28,7 @@ const uvbUrl = (process.env.UVB_PUBLIC_URL ?? "http://127.0.0.1:3010").replace(/
 const telegramSendTextReplies = (process.env.TELEGRAM_SEND_TEXT_REPLIES ?? "true").toLowerCase() !== "false";
 const telegramSendTtsReplies = (process.env.TELEGRAM_SEND_TTS_REPLIES ?? "true").toLowerCase() !== "false";
 const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_VOICE || "af_nova";
+const telegramTextChunkChars = Number.parseInt(process.env.TELEGRAM_TEXT_CHUNK_CHARS ?? "3600", 10);
 const telegramTtsChunkChars = Number.parseInt(
   process.env.TELEGRAM_TTS_CHUNK_CHARS ?? process.env.TELEGRAM_TTS_MAX_CHARS ?? "4200",
   10
@@ -77,6 +78,57 @@ async function sendMessage(chatId, text) {
     text,
     disable_web_page_preview: true,
   });
+}
+
+function splitTextForTelegram(text) {
+  const cleanText = text.trim();
+  if (!cleanText) return [];
+
+  const chunkChars = Number.isFinite(telegramTextChunkChars) && telegramTextChunkChars > 1000
+    ? Math.min(telegramTextChunkChars, 3900)
+    : 3600;
+  const chunks = [];
+  let remaining = cleanText;
+
+  while (remaining.length) {
+    if (remaining.length <= chunkChars) {
+      chunks.push(remaining);
+      break;
+    }
+
+    const windowText = remaining.slice(0, chunkChars);
+    const paragraphBreak = Math.max(windowText.lastIndexOf("\n\n"), windowText.lastIndexOf("\r\n\r\n"));
+    const sentenceBreak = Math.max(
+      windowText.lastIndexOf(". "),
+      windowText.lastIndexOf("! "),
+      windowText.lastIndexOf("? ")
+    );
+    const lineBreak = windowText.lastIndexOf("\n");
+    const spaceBreak = windowText.lastIndexOf(" ");
+    const breakAt =
+      paragraphBreak > Math.floor(chunkChars * 0.35)
+        ? paragraphBreak + 2
+        : sentenceBreak > Math.floor(chunkChars * 0.45)
+          ? sentenceBreak + 1
+          : lineBreak > Math.floor(chunkChars * 0.5)
+            ? lineBreak
+            : spaceBreak > Math.floor(chunkChars * 0.5)
+              ? spaceBreak
+              : chunkChars;
+
+    chunks.push(remaining.slice(0, breakAt).trim());
+    remaining = remaining.slice(breakAt).trim();
+  }
+
+  return chunks.filter(Boolean);
+}
+
+async function sendLongMessage(chatId, text) {
+  const parts = splitTextForTelegram(text);
+  for (const [index, part] of parts.entries()) {
+    const prefix = parts.length > 1 ? `Part ${index + 1}/${parts.length}\n\n` : "";
+    await sendMessage(chatId, `${prefix}${part}`);
+  }
 }
 
 async function sendAction(chatId, action) {
@@ -308,7 +360,7 @@ async function handleMessage(message) {
     await sendMessage(chatId, "Working on it through UVB...");
     const answer = await askKnightBot(chatId, content || text, logText);
     if (telegramSendTextReplies) {
-      await sendMessage(chatId, answer.slice(0, 3900));
+      await sendLongMessage(chatId, answer);
     }
     try {
       await sendSpeech(chatId, answer);
@@ -316,7 +368,7 @@ async function handleMessage(message) {
       const messageText = error instanceof Error ? error.message : "Unknown TTS error.";
       console.error(`[uvb-telegram] TTS reply failed for chat ${chatId}: ${messageText}`);
       if (!telegramSendTextReplies) {
-        await sendMessage(chatId, answer.slice(0, 3900));
+        await sendLongMessage(chatId, answer);
       }
     }
     console.log(`[uvb-telegram] Replied to chat ${chatId}.`);

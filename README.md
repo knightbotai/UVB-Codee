@@ -98,6 +98,7 @@ Required values:
 Optional Telegram voice controls:
 
 - `TELEGRAM_SEND_TEXT_REPLIES`: keep text replies on while also sending audio (`true` by default).
+- `TELEGRAM_TEXT_CHUNK_CHARS`: approximate text size per Telegram message for long replies (`3600` by default).
 - `TELEGRAM_SEND_TTS_REPLIES`: send Kokoro-generated audio replies back to Telegram (`true` by default).
 - `TELEGRAM_TTS_VOICE`: Kokoro voice used for Telegram replies, defaulting to `UVB_TTS_VOICE` or `af_nova`.
 - `TELEGRAM_TTS_CHUNK_CHARS`: approximate text size per audio part for long replies (`4200` by default, roughly a three-minute target).
