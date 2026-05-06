@@ -1,5 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,6 +32,7 @@ const telegramSendTtsReplies = (process.env.TELEGRAM_SEND_TTS_REPLIES ?? "true")
 const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_VOICE || "af_nova";
 const telegramTextChunkChars = Number.parseInt(process.env.TELEGRAM_TEXT_CHUNK_CHARS ?? "3600", 10);
 const telegramDocumentMaxChars = Number.parseInt(process.env.TELEGRAM_DOCUMENT_MAX_CHARS ?? "120000", 10);
+const telegramVideoMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_MAX_MB ?? "80", 10);
 const telegramTtsChunkChars = Number.parseInt(
   process.env.TELEGRAM_TTS_CHUNK_CHARS ?? process.env.TELEGRAM_TTS_MAX_CHARS ?? "4200",
   10
@@ -201,23 +204,57 @@ function isTextDocument(document) {
   );
 }
 
+function isVideoDocument(document) {
+  const mimeType = String(document?.mime_type || "").toLowerCase();
+  const name = String(document?.file_name || "").toLowerCase();
+  const extension = path.extname(name);
+  return (
+    mimeType.startsWith("video/") ||
+    [".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"].includes(extension)
+  );
+}
+
+function getVideoAttachment(message) {
+  if (message.video?.file_id) return message.video;
+  if (message.video_note?.file_id) return message.video_note;
+  if (message.animation?.file_id) return message.animation;
+  if (message.document?.file_id && isVideoDocument(message.document)) return message.document;
+  return null;
+}
+
+function assertVideoSizeAllowed(video) {
+  const maxBytes = (Number.isFinite(telegramVideoMaxMb) && telegramVideoMaxMb > 1 ? telegramVideoMaxMb : 80) * 1024 * 1024;
+  const fileSize = Number(video?.file_size || 0);
+  if (fileSize > maxBytes) {
+    throw new Error(`Telegram video is ${(fileSize / 1024 / 1024).toFixed(1)} MB, above the ${telegramVideoMaxMb} MB local routing limit.`);
+  }
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", args, { windowsHide: true });
+    let stderr = "";
+    ffmpeg.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    ffmpeg.on("error", reject);
+    ffmpeg.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`ffmpeg exited with ${code}: ${stderr.slice(-800)}`));
+    });
+  });
+}
+
 async function transcribeTelegramVoice(message) {
   const voice = message.voice ?? message.audio;
   if (!voice?.file_id) return "";
 
   await sendAction(message.chat.id, "typing");
   const file = await downloadTelegramFile(voice.file_id);
-
-  const form = new FormData();
-  form.append("file", file.blob, file.name || "telegram-voice.ogg");
-
-  const sttResponse = await fetch(`${uvbUrl}/api/stt`, { method: "POST", body: form });
-  const data = await sttResponse.json().catch(() => ({}));
-  if (!sttResponse.ok || !data.text) {
-    throw new Error(data.error ?? "Telegram voice transcription failed.");
-  }
-
-  return data.text;
+  return transcribeAudioBlob(file.blob, file.name || "telegram-voice.ogg");
 }
 
 async function buildTelegramImageContent(message) {
@@ -267,6 +304,78 @@ async function readTelegramTextDocument(message) {
     : "";
 
   return `${intro}\n\n--- BEGIN ${fileName} ---\n${content}\n--- END ${fileName} ---${ending}`;
+}
+
+async function transcribeAudioBlob(blob, fileName) {
+  const form = new FormData();
+  form.append("file", blob, fileName || "telegram-audio.mp3");
+
+  const sttResponse = await fetch(`${uvbUrl}/api/stt`, { method: "POST", body: form });
+  const data = await sttResponse.json().catch(() => ({}));
+  if (!sttResponse.ok || !data.text) {
+    throw new Error(data.error ?? "Telegram media transcription failed.");
+  }
+
+  return data.text;
+}
+
+async function buildTelegramVideoContent(message) {
+  const video = getVideoAttachment(message);
+  if (!video?.file_id) return null;
+
+  assertVideoSizeAllowed(video);
+  await sendAction(message.chat.id, "typing");
+  const file = await downloadTelegramFile(video.file_id);
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "uvb-telegram-video-"));
+  const inputExtension = path.extname(file.name || file.path || "") || ".mp4";
+  const inputPath = path.join(tempDir, `input${inputExtension}`);
+  const audioPath = path.join(tempDir, "audio.mp3");
+  const framePath = path.join(tempDir, "frame.jpg");
+
+  try {
+    await writeFile(inputPath, Buffer.from(await file.blob.arrayBuffer()));
+    await runFfmpeg(["-y", "-i", inputPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "96k", audioPath]);
+
+    let transcript = "";
+    try {
+      const audioBytes = await readFile(audioPath);
+      transcript = await transcribeAudioBlob(new Blob([audioBytes], { type: "audio/mpeg" }), "telegram-video-audio.mp3");
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Unknown video transcription error.";
+      transcript = `[Video audio transcription failed: ${messageText}]`;
+    }
+
+    let frameDataUrl = "";
+    try {
+      await runFfmpeg(["-y", "-ss", "1", "-i", inputPath, "-frames:v", "1", "-q:v", "4", framePath]);
+      const frameBytes = await readFile(framePath);
+      frameDataUrl = `data:image/jpeg;base64,${frameBytes.toString("base64")}`;
+    } catch {
+      frameDataUrl = "";
+    }
+
+    const caption = message.caption?.trim();
+    const videoName = message.document?.file_name || file.name || "telegram-video";
+    const metadata = [
+      `Telegram video "${videoName}" was sent.`,
+      caption ? `Sender instruction/caption: ${caption}` : "",
+      video.duration ? `Duration: ${video.duration} seconds.` : "",
+      video.width && video.height ? `Resolution: ${video.width}x${video.height}.` : "",
+      transcript ? `Audio transcript:\n${transcript}` : "No audio transcript was available.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const prompt = `${metadata}\n\nPlease analyze the available video context. If a frame is attached, use it as a visual reference; if only transcript is available, be clear about that limitation.`;
+
+    if (!frameDataUrl) return prompt;
+
+    return [
+      { type: "text", text: prompt },
+      { type: "image_url", image_url: { url: frameDataUrl, detail: "auto" } },
+    ];
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 function splitTextForSpeech(text) {
@@ -415,6 +524,12 @@ async function handleMessage(message) {
       logText = text;
     }
 
+    if (!text && getVideoAttachment(message)) {
+      await sendMessage(chatId, "Video received. Extracting audio and a reference frame locally...");
+      content = await buildTelegramVideoContent(message);
+      logText = message.caption?.trim() || "[Telegram video]";
+    }
+
     if (!text && message.document && isTextDocument(message.document)) {
       text = await readTelegramTextDocument(message);
       logText = message.caption?.trim() || `[Telegram text document: ${message.document.file_name || "document"}]`;
@@ -426,7 +541,7 @@ async function handleMessage(message) {
     }
 
     if (!text && !content) {
-      await sendMessage(chatId, "I received the message, but there was no text, voice, audio, image, or text document I can route yet.");
+      await sendMessage(chatId, "I received the message, but there was no text, voice, audio, video, image, or text document I can route yet.");
       return;
     }
 

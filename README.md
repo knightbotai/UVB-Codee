@@ -104,8 +104,9 @@ Optional Telegram voice controls:
 - `TELEGRAM_TTS_CHUNK_CHARS`: approximate text size per audio part for long replies (`4200` by default, roughly a three-minute target).
 - `TELEGRAM_TTS_MAX_PARTS`: maximum number of sequential audio parts per reply (`6` by default).
 - `TELEGRAM_DOCUMENT_MAX_CHARS`: maximum text-document characters routed into UVB (`120000` by default).
+- `TELEGRAM_VIDEO_MAX_MB`: maximum Telegram video size routed locally (`80` MB by default).
 
-The worker can route Telegram text, voice/audio, photos, image documents, and text documents into UVB. Photos and image documents are forwarded to `/api/chat` as OpenAI-style `image_url` content, so the active local model still needs vision support for detailed image understanding. Text-like documents such as `.txt`, `.md`, `.json`, `.csv`, logs, and common code/config files are downloaded and wrapped into the prompt with clear file delimiters.
+The worker can route Telegram text, voice/audio, videos, photos, image documents, and text documents into UVB. Photos and image documents are forwarded to `/api/chat` as OpenAI-style `image_url` content, so the active local model still needs vision support for detailed image understanding. Video routing uses local `ffmpeg` to extract an audio transcript plus one reference frame; richer multi-frame scene understanding is the next step. Text-like documents such as `.txt`, `.md`, `.json`, `.csv`, logs, and common code/config files are downloaded and wrapped into the prompt with clear file delimiters.
 
 Run only the Telegram worker:
 
