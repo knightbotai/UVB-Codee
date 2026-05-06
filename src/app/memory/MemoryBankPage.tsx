@@ -7,6 +7,7 @@ import {
   ClockIcon,
   FolderIcon,
   MagnifyingGlassIcon,
+  PencilSquareIcon,
   PlusIcon,
   TagIcon,
   TrashIcon,
@@ -127,6 +128,7 @@ export default function MemoryBankPage() {
   const [newContent, setNewContent] = useState("");
   const [newType, setNewType] = useState<MemoryType>("knowledge");
   const [newTags, setNewTags] = useState("");
+  const [editingId, setEditingId] = useState("");
 
   const entries = useMemo(
     () =>
@@ -158,29 +160,61 @@ export default function MemoryBankPage() {
     },
   ];
 
-  const addMemory = () => {
-    const content = newContent.trim();
-    if (!content) return;
-
-    const entry: MemoryEntry = {
-      id: `manual:${generateId()}`,
-      title: newTitle.trim() || content.slice(0, 64) || "Untitled memory",
-      type: newType,
-      content,
-      timestamp: Date.now(),
-      tags: newTags
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean),
-      sizeBytes: byteSize(content),
-      source: "manual",
-    };
-    const nextEntries = [entry, ...manualEntries];
-    setManualEntries(nextEntries);
-    saveManualMemories(nextEntries);
+  const clearMemoryForm = () => {
     setNewTitle("");
     setNewContent("");
     setNewTags("");
+    setNewType("knowledge");
+    setEditingId("");
+  };
+
+  const saveMemory = () => {
+    const content = newContent.trim();
+    if (!content) return;
+
+    const tags = newTags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    const nextEntries = editingId
+      ? manualEntries.map((entry) =>
+          entry.id === editingId
+            ? {
+                ...entry,
+                title: newTitle.trim() || content.slice(0, 64) || "Untitled memory",
+                type: newType,
+                content,
+                timestamp: Date.now(),
+                tags,
+                sizeBytes: byteSize(content),
+              }
+            : entry
+        )
+      : [
+          {
+            id: `manual:${generateId()}`,
+            title: newTitle.trim() || content.slice(0, 64) || "Untitled memory",
+            type: newType,
+            content,
+            timestamp: Date.now(),
+            tags,
+            sizeBytes: byteSize(content),
+            source: "manual" as const,
+          },
+          ...manualEntries,
+        ];
+    setManualEntries(nextEntries);
+    saveManualMemories(nextEntries);
+    clearMemoryForm();
+  };
+
+  const editMemory = (entry: MemoryEntry) => {
+    if (entry.source !== "manual") return;
+    setEditingId(entry.id);
+    setNewTitle(entry.title);
+    setNewContent(entry.content);
+    setNewType(entry.type === "conversation" ? "knowledge" : entry.type);
+    setNewTags(entry.tags.join(", "));
   };
 
   const deleteMemory = (id: string) => {
@@ -225,7 +259,7 @@ export default function MemoryBankPage() {
         <div className="flex items-center gap-2">
           <PlusIcon className="h-4 w-4 text-uvb-neon-green" />
           <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
-            Add Memory
+            {editingId ? "Edit Memory" : "Add Memory"}
           </h3>
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_160px]">
@@ -258,10 +292,15 @@ export default function MemoryBankPage() {
             className="input-field flex-1"
             placeholder="Tags, comma separated"
           />
-          <button onClick={addMemory} className="btn-primary inline-flex items-center justify-center gap-2">
-            <PlusIcon className="h-4 w-4" />
-            Save Memory
+          <button onClick={saveMemory} className="btn-primary inline-flex items-center justify-center gap-2">
+            {editingId ? <PencilSquareIcon className="h-4 w-4" /> : <PlusIcon className="h-4 w-4" />}
+            {editingId ? "Update Memory" : "Save Memory"}
           </button>
+          {editingId && (
+            <button onClick={clearMemoryForm} className="btn-ghost inline-flex items-center justify-center">
+              Cancel
+            </button>
+          )}
         </div>
       </div>
 
@@ -366,14 +405,24 @@ export default function MemoryBankPage() {
                   <ArrowDownTrayIcon className="w-4 h-4" />
                 </button>
                 {entry.source === "manual" && (
-                  <button
-                    onClick={() => deleteMemory(entry.id)}
-                    className="p-1.5 rounded-lg hover:bg-uvb-light-gray/30 text-uvb-text-muted hover:text-red-400"
-                    title="Delete memory"
-                    aria-label="Delete memory"
-                  >
-                    <TrashIcon className="w-4 h-4" />
-                  </button>
+                  <>
+                    <button
+                      onClick={() => editMemory(entry)}
+                      className="p-1.5 rounded-lg hover:bg-uvb-light-gray/30 text-uvb-text-muted hover:text-uvb-steel-blue"
+                      title="Edit memory"
+                      aria-label="Edit memory"
+                    >
+                      <PencilSquareIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => deleteMemory(entry.id)}
+                      className="p-1.5 rounded-lg hover:bg-uvb-light-gray/30 text-uvb-text-muted hover:text-red-400"
+                      title="Delete memory"
+                      aria-label="Delete memory"
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -395,7 +444,7 @@ export default function MemoryBankPage() {
         </div>
         <p className="text-xs leading-relaxed text-uvb-text-secondary">
           This page now reflects actual local UVB data: saved chat threads plus pinned memories stored in browser localStorage.
-          Semantic embeddings and automatic retrieval into chat are still future work, but the memory cockpit is live and exportable.
+          Manual memories can be created, edited, deleted, searched, and exported. Semantic embeddings and automatic retrieval into chat are still future work.
         </p>
       </div>
     </div>

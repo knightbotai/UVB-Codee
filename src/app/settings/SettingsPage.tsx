@@ -34,6 +34,14 @@ import {
   saveAgentToolSettings,
   type AgentToolSettings,
 } from "@/lib/agentToolSettings";
+import {
+  DEFAULT_UI_SETTINGS,
+  UI_ACCENTS,
+  UI_THEMES,
+  loadUiSettings,
+  saveUiSettings,
+  type UiSettings,
+} from "@/lib/uiSettings";
 
 const MODEL_PRESETS = [
   {
@@ -63,6 +71,39 @@ const MODEL_PRESETS = [
     baseUrl: "",
     model: "",
     apiKey: "",
+  },
+];
+
+const AGENT_CAPABILITY_READINESS = [
+  {
+    title: "Web Research",
+    status: "configured",
+    detail: "Permissions, domains, and network scope are saved. Needs the supervised browser runner to execute from Sophia.",
+  },
+  {
+    title: "Browser Use",
+    status: "configured",
+    detail: "Browser-use permission is modeled. Next step is a Playwright/browser-use job queue with screenshots and approvals.",
+  },
+  {
+    title: "Local Coding",
+    status: "configured",
+    detail: "Workspace, file, terminal, git, and provider preferences are saved. Needs the agent execution adapter before Sophia can patch code herself.",
+  },
+  {
+    title: "Kilo Code Gateway",
+    status: "optional",
+    detail: "Kilo gateway URL, model, API key, and free-model preference are stored as a fallback provider option.",
+  },
+  {
+    title: "Computer Use",
+    status: "staged",
+    detail: "Permission exists, but OS-level automation should wait for approval queues, audit trails, and browser tools to be stable.",
+  },
+  {
+    title: "Memory Retrieval",
+    status: "partial",
+    detail: "Local memories and Telegram/imported chat logs are searchable and editable. Automatic RAG injection into prompts is still staged.",
   },
 ];
 
@@ -104,6 +145,8 @@ export default function SettingsPage() {
     loadAgentToolSettings()
   );
   const [agentToolStatus, setAgentToolStatus] = useState("");
+  const [uiSettings, setUiSettings] = useState<UiSettings>(() => loadUiSettings());
+  const [uiStatus, setUiStatus] = useState("");
   const [voiceStack, setVoiceStack] = useState<VoiceStackResponse | null>(null);
   const [voiceStackStatus, setVoiceStackStatus] = useState("Loading voice stack...");
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -162,6 +205,16 @@ export default function SettingsPage() {
   const updateAgentToolSettings = (updates: Partial<AgentToolSettings>) => {
     setAgentToolSettings((current) => ({ ...current, ...updates }));
     setAgentToolStatus("");
+  };
+
+  const updateUiSettings = (updates: Partial<UiSettings>) => {
+    setUiSettings((current) => ({ ...current, ...updates }));
+    setUiStatus("Unsaved local interface preferences.");
+  };
+
+  const saveCurrentUiSettings = () => {
+    saveUiSettings(uiSettings);
+    setUiStatus("Saved local interface, privacy, and notification preferences.");
   };
 
   const saveCurrentAgentToolSettings = () => {
@@ -286,6 +339,7 @@ export default function SettingsPage() {
       agentToolSettings,
       modelSettings,
       voiceSettings,
+      uiSettings,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
@@ -306,6 +360,7 @@ export default function SettingsPage() {
         voiceSettings?: Partial<VoiceSettings>;
         identitySettings?: Partial<IdentitySettings>;
         agentToolSettings?: Partial<AgentToolSettings>;
+        uiSettings?: Partial<UiSettings>;
       };
 
       if (data.modelSettings) {
@@ -343,6 +398,12 @@ export default function SettingsPage() {
         };
         setAgentToolSettings(nextAgentToolSettings);
         saveAgentToolSettings(nextAgentToolSettings);
+      }
+
+      if (data.uiSettings) {
+        const nextUiSettings = { ...DEFAULT_UI_SETTINGS, ...data.uiSettings };
+        setUiSettings(nextUiSettings);
+        saveUiSettings(nextUiSettings);
       }
 
       setProfileStatus("Imported profile and applied settings.");
@@ -1045,6 +1106,52 @@ export default function SettingsPage() {
 
                 <div className="uvb-card">
                   <h3 className="mb-4 text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                    Capability Readiness
+                  </h3>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {AGENT_CAPABILITY_READINESS.map((item) => {
+                      const enabled =
+                        item.title === "Web Research"
+                          ? agentToolSettings.webResearchEnabled && agentToolSettings.networkEnabled
+                          : item.title === "Browser Use"
+                            ? agentToolSettings.browserUseEnabled
+                            : item.title === "Local Coding"
+                              ? agentToolSettings.codingTasksEnabled
+                              : item.title === "Kilo Code Gateway"
+                                ? agentToolSettings.codingProvider === "kilo-gateway"
+                                : item.title === "Computer Use"
+                                  ? agentToolSettings.localComputerUseEnabled
+                                  : true;
+                      const tone =
+                        item.status === "configured"
+                          ? "border-uvb-steel-blue/30 text-uvb-steel-blue"
+                          : item.status === "partial"
+                            ? "border-uvb-accent-yellow/30 text-uvb-accent-yellow"
+                            : item.status === "optional"
+                              ? "border-uvb-royal-purple/30 text-uvb-royal-purple"
+                              : "border-uvb-border/30 text-uvb-text-muted";
+                      return (
+                        <div
+                          key={item.title}
+                          className={`rounded-lg border p-3 ${
+                            enabled ? "border-uvb-border/30 bg-uvb-dark-gray/40" : "border-uvb-border/20 bg-uvb-dark-gray/20 opacity-70"
+                          }`}
+                        >
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <h4 className="text-sm font-semibold text-uvb-text-primary">{item.title}</h4>
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${tone}`}>
+                              {enabled ? item.status : "disabled"}
+                            </span>
+                          </div>
+                          <p className="text-xs leading-relaxed text-uvb-text-muted">{item.detail}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="uvb-card">
+                  <h3 className="mb-4 text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
                     Permission Model
                   </h3>
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -1300,29 +1407,23 @@ export default function SettingsPage() {
                     Theme
                   </h3>
                   <div className="grid grid-cols-3 gap-3">
-                    {["Galaxy Dark", "Deep Space", "Neon Night"].map(
-                      (theme, i) => (
+                    {UI_THEMES.map(
+                      (theme) => (
                         <button
-                          key={theme}
+                          key={theme.id}
+                          onClick={() => updateUiSettings({ theme: theme.id })}
                           className={`p-4 rounded-lg border text-center transition-all ${
-                            i === 0
+                            uiSettings.theme === theme.id
                               ? "border-uvb-neon-green/40 bg-uvb-deep-teal/10"
                               : "border-uvb-border/30 hover:border-uvb-border"
                           }`}
                         >
                           <div
                             className="w-full h-16 rounded-lg mb-2"
-                            style={{
-                              background:
-                                i === 0
-                                  ? "linear-gradient(135deg, #0a0a1a, #1a0a2e, #0a1a2e)"
-                                  : i === 1
-                                  ? "linear-gradient(135deg, #0a0a0a, #0a0a14, #0a1420)"
-                                  : "linear-gradient(135deg, #0a0a0a, #1a0030, #000a1a)",
-                            }}
+                            style={{ background: theme.preview }}
                           />
                           <span className="text-xs text-uvb-text-secondary">
-                            {theme}
+                            {theme.name}
                           </span>
                         </button>
                       )
@@ -1334,20 +1435,17 @@ export default function SettingsPage() {
                     Accent Color
                   </h3>
                   <div className="flex gap-3">
-                    {[
-                      { name: "Neon Green", color: "#39ff14" },
-                      { name: "Steel Blue", color: "#4a6fa5" },
-                      { name: "Royal Purple", color: "#6b1fa0" },
-                      { name: "Deep Teal", color: "#1a7a7a" },
-                      { name: "Accent Orange", color: "#ff6b35" },
-                    ].map((accent) => (
+                    {UI_ACCENTS.map((accent) => (
                       <button
                         key={accent.name}
+                        onClick={() =>
+                          updateUiSettings({ accentName: accent.name, accentColor: accent.color })
+                        }
                         className="flex flex-col items-center gap-1.5"
                       >
                         <span
                           className={`w-8 h-8 rounded-full border-2 ${
-                            accent.name === "Neon Green"
+                            uiSettings.accentName === accent.name
                               ? "border-white/40"
                               : "border-transparent"
                           }`}
@@ -1373,10 +1471,37 @@ export default function SettingsPage() {
                         Galaxy particle background animation
                       </p>
                     </div>
-                    <button className="w-11 h-6 rounded-full bg-uvb-neon-green/30 relative">
-                      <span className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-uvb-neon-green shadow" />
+                    <button
+                      onClick={() => updateUiSettings({ particlesEnabled: !uiSettings.particlesEnabled })}
+                      className={`w-11 h-6 rounded-full relative ${
+                        uiSettings.particlesEnabled ? "bg-uvb-neon-green/30" : "bg-uvb-light-gray"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 w-5 h-5 rounded-full shadow transition-all ${
+                          uiSettings.particlesEnabled
+                            ? "right-0.5 bg-uvb-neon-green"
+                            : "left-0.5 bg-uvb-text-muted"
+                        }`}
+                      />
                     </button>
                   </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button onClick={saveCurrentUiSettings} className="btn-primary">
+                    Save Interface Settings
+                  </button>
+                  <button
+                    onClick={() => {
+                      setUiSettings(DEFAULT_UI_SETTINGS);
+                      saveUiSettings(DEFAULT_UI_SETTINGS);
+                      setUiStatus("Restored and saved default interface settings.");
+                    }}
+                    className="btn-ghost"
+                  >
+                    Reset
+                  </button>
+                  {uiStatus && <span className="text-xs text-uvb-text-muted">{uiStatus}</span>}
                 </div>
               </motion.div>
             )}
@@ -1586,14 +1711,28 @@ export default function SettingsPage() {
                     <div className="flex items-center justify-between p-3 rounded-lg bg-uvb-dark-gray/40">
                       <div>
                         <p className="text-sm text-uvb-text-primary">
-                          RAG Retrieval
+                          Memory Retrieval
                         </p>
                         <p className="text-xs text-uvb-text-muted">
-                          Auto-retrieve relevant memories
+                          Staged until embeddings and chat injection are wired
                         </p>
                       </div>
-                      <button className="w-11 h-6 rounded-full bg-uvb-neon-green/30 relative">
-                        <span className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-uvb-neon-green shadow" />
+                      <button
+                        onClick={() =>
+                          updateUiSettings({ ragRetrievalEnabled: !uiSettings.ragRetrievalEnabled })
+                        }
+                        className={`w-11 h-6 rounded-full relative ${
+                          uiSettings.ragRetrievalEnabled ? "bg-uvb-accent-yellow/30" : "bg-uvb-light-gray"
+                        }`}
+                        title="Preference saved locally; retrieval pipeline is staged."
+                      >
+                        <span
+                          className={`absolute top-0.5 w-5 h-5 rounded-full shadow transition-all ${
+                            uiSettings.ragRetrievalEnabled
+                              ? "right-0.5 bg-uvb-accent-yellow"
+                              : "left-0.5 bg-uvb-text-muted"
+                          }`}
+                        />
                       </button>
                     </div>
                   </div>
@@ -1616,22 +1755,30 @@ export default function SettingsPage() {
                       {
                         label: "Local Data Only",
                         desc: "All data stays on your machine",
-                        enabled: true,
+                        enabled: uiSettings.localDataOnly,
+                        locked: true,
+                        update: () => undefined,
                       },
                       {
                         label: "Encrypted Storage",
-                        desc: "AES-256 encryption for stored threads",
-                        enabled: true,
+                        desc: "Preference saved; encrypted thread storage is staged",
+                        enabled: uiSettings.encryptedStorage,
+                        update: () =>
+                          updateUiSettings({ encryptedStorage: !uiSettings.encryptedStorage }),
                       },
                       {
                         label: "Auto-Save Threads",
-                        desc: "Automatically save conversation history",
-                        enabled: true,
+                        desc: "Conversation text is persisted locally; attachment payloads are pruned for quota safety",
+                        enabled: uiSettings.autoSaveThreads,
+                        locked: true,
+                        update: () => undefined,
                       },
                       {
                         label: "Telemetry",
-                        desc: "Anonymous usage analytics",
-                        enabled: false,
+                        desc: "No telemetry is sent by UVB",
+                        enabled: uiSettings.telemetryEnabled,
+                        locked: true,
+                        update: () => undefined,
                       },
                     ].map((setting) => (
                       <div
@@ -1647,6 +1794,8 @@ export default function SettingsPage() {
                           </p>
                         </div>
                         <button
+                          onClick={setting.update}
+                          disabled={setting.locked}
                           className={`w-11 h-6 rounded-full relative ${
                             setting.enabled
                               ? "bg-uvb-neon-green/30"
@@ -1664,6 +1813,12 @@ export default function SettingsPage() {
                       </div>
                     ))}
                   </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button onClick={saveCurrentUiSettings} className="btn-primary">
+                    Save Security Preferences
+                  </button>
+                  {uiStatus && <span className="text-xs text-uvb-text-muted">{uiStatus}</span>}
                 </div>
               </motion.div>
             )}
@@ -1683,22 +1838,30 @@ export default function SettingsPage() {
                       {
                         label: "Task Complete",
                         desc: "When AI finishes a long-running task",
-                        enabled: true,
+                        enabled: uiSettings.notifyTaskComplete,
+                        update: () =>
+                          updateUiSettings({ notifyTaskComplete: !uiSettings.notifyTaskComplete }),
                       },
                       {
                         label: "Voice Ready",
                         desc: "When voice processing is complete",
-                        enabled: true,
+                        enabled: uiSettings.notifyVoiceReady,
+                        update: () =>
+                          updateUiSettings({ notifyVoiceReady: !uiSettings.notifyVoiceReady }),
                       },
                       {
                         label: "System Alerts",
                         desc: "Critical system notifications",
-                        enabled: true,
+                        enabled: uiSettings.notifySystemAlerts,
+                        update: () =>
+                          updateUiSettings({ notifySystemAlerts: !uiSettings.notifySystemAlerts }),
                       },
                       {
                         label: "Sound Effects",
                         desc: "Audio feedback for interactions",
-                        enabled: false,
+                        enabled: uiSettings.soundEffectsEnabled,
+                        update: () =>
+                          updateUiSettings({ soundEffectsEnabled: !uiSettings.soundEffectsEnabled }),
                       },
                     ].map((setting) => (
                       <div
@@ -1714,6 +1877,7 @@ export default function SettingsPage() {
                           </p>
                         </div>
                         <button
+                          onClick={setting.update}
                           className={`w-11 h-6 rounded-full relative ${
                             setting.enabled
                               ? "bg-uvb-neon-green/30"
@@ -1731,6 +1895,12 @@ export default function SettingsPage() {
                       </div>
                     ))}
                   </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button onClick={saveCurrentUiSettings} className="btn-primary">
+                    Save Notification Preferences
+                  </button>
+                  {uiStatus && <span className="text-xs text-uvb-text-muted">{uiStatus}</span>}
                 </div>
               </motion.div>
             )}

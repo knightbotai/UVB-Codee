@@ -240,7 +240,16 @@ export default function MediaStudioPage() {
                       </span>
                     </motion.div>
                   ) : (
-                    mediaPreviewUrl && activeTab === "video" ? (
+                    mediaPreviewUrl && activeTab === "image" ? (
+                      <Image
+                        src={mediaPreviewUrl}
+                        alt={selectedFileName || "Uploaded image"}
+                        width={960}
+                        height={540}
+                        unoptimized
+                        className="h-full w-full object-contain"
+                      />
+                    ) : mediaPreviewUrl && activeTab === "video" ? (
                       <video
                         src={mediaPreviewUrl}
                         controls

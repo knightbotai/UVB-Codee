@@ -29,7 +29,7 @@ interface HealthResponse {
 }
 
 export default function Header() {
-  const { activeSection } = useAppStore();
+  const { activeSection, setActiveSection, setShowCommandPalette } = useAppStore();
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [showHealth, setShowHealth] = useState(false);
   const [identity, setIdentity] = useState<IdentitySettings>(() => loadIdentitySettings());
@@ -104,14 +104,24 @@ export default function Header() {
 
       <div className="flex items-center gap-3">
         {/* Search */}
-        <button className="p-2 rounded-lg hover:bg-uvb-light-gray/40 text-uvb-text-secondary hover:text-uvb-text-primary transition-colors">
+        <button
+          onClick={() => setShowCommandPalette(true)}
+          className="p-2 rounded-lg hover:bg-uvb-light-gray/40 text-uvb-text-secondary hover:text-uvb-text-primary transition-colors"
+          title="Open command search"
+          aria-label="Open command search"
+        >
           <MagnifyingGlassIcon className="w-5 h-5" />
         </button>
 
         {/* Notifications */}
-        <button className="relative p-2 rounded-lg hover:bg-uvb-light-gray/40 text-uvb-text-secondary hover:text-uvb-text-primary transition-colors">
+        <button
+          onClick={() => setShowHealth((current) => !current)}
+          className="relative p-2 rounded-lg hover:bg-uvb-light-gray/40 text-uvb-text-secondary hover:text-uvb-text-primary transition-colors"
+          title="Show local system alerts"
+          aria-label="Show local system alerts"
+        >
           <BellIcon className="w-5 h-5" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-uvb-neon-green status-pulse" />
+          <span className={`absolute top-1.5 right-1.5 w-2 h-2 rounded-full ${statusColor} status-pulse`} />
         </button>
 
         {/* Status indicator */}
@@ -171,7 +181,12 @@ export default function Header() {
         </div>
 
         {/* Profile */}
-        <button className="p-1 rounded-lg hover:bg-uvb-light-gray/40 transition-colors">
+        <button
+          onClick={() => setActiveSection("settings")}
+          className="p-1 rounded-lg hover:bg-uvb-light-gray/40 transition-colors"
+          title="Open profile settings"
+          aria-label="Open profile settings"
+        >
           {identity.userPortraitUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img

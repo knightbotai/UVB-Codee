@@ -50,6 +50,7 @@ interface VoiceCloneProfile {
 }
 
 const VOICE_CLONE_STORAGE_KEY = "uvb:voice-clone-profiles";
+const VOICE_CLONE_UPDATED_EVENT = "uvb:voice-clone-profiles-updated";
 const MAX_REFERENCE_SAMPLE_BYTES = 8 * 1024 * 1024;
 const CLONE_PROVIDERS: Array<{ id: CloneProvider; label: string; desc: string }> = [
   { id: "kokoro", label: "Kokoro Fast", desc: "Fast local voice endpoint / current UVB default." },
@@ -120,6 +121,7 @@ function loadCloneProfiles(): VoiceCloneProfile[] {
 
 function saveCloneProfiles(profiles: VoiceCloneProfile[]) {
   window.localStorage.setItem(VOICE_CLONE_STORAGE_KEY, JSON.stringify(profiles.map(normalizeCloneProfile)));
+  window.dispatchEvent(new Event(VOICE_CLONE_UPDATED_EVENT));
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {

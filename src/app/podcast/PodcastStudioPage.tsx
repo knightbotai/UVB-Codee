@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppStore, type PodcastSeat } from "@/stores/appStore";
 import {
@@ -17,6 +17,9 @@ import { Radio, Mic2, Headphones, Users } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
 import { VOICE_MODEL_CATALOG } from "@/lib/voiceModelCatalog";
 
+const VOICE_CLONE_STORAGE_KEY = "uvb:voice-clone-profiles";
+const VOICE_CLONE_UPDATED_EVENT = "uvb:voice-clone-profiles-updated";
+
 interface CloneProfileSummary {
   id: string;
   name: string;
@@ -26,7 +29,7 @@ interface CloneProfileSummary {
 function loadCloneProfiles(): CloneProfileSummary[] {
   if (typeof window === "undefined") return [];
   try {
-    const parsed = JSON.parse(window.localStorage.getItem("uvb:voice-clone-profiles") || "[]") as Array<Partial<CloneProfileSummary>>;
+    const parsed = JSON.parse(window.localStorage.getItem(VOICE_CLONE_STORAGE_KEY) || "[]") as Array<Partial<CloneProfileSummary>>;
     return Array.isArray(parsed)
       ? parsed
           .map((profile) => ({
@@ -53,6 +56,12 @@ export default function PodcastStudioPage() {
   const [synthesisEngine, setSynthesisEngine] = useState("vibevoice-tts-1.5b");
   const [renderMode, setRenderMode] = useState("Long-form multi-speaker");
   const [cloneProfiles, setCloneProfiles] = useState<CloneProfileSummary[]>(loadCloneProfiles);
+  const [recordingStatus, setRecordingStatus] = useState("Ready for local session capture.");
+  const [recordingUrl, setRecordingUrl] = useState("");
+  const [recordingName, setRecordingName] = useState("");
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const podcastVoiceEngines = VOICE_MODEL_CATALOG.filter(
     (item) =>
       item.kind === "tts" &&
@@ -73,8 +82,71 @@ export default function PodcastStudioPage() {
   useEffect(() => {
     const refreshProfiles = () => setCloneProfiles(loadCloneProfiles());
     window.addEventListener("storage", refreshProfiles);
-    return () => window.removeEventListener("storage", refreshProfiles);
+    window.addEventListener(VOICE_CLONE_UPDATED_EVENT, refreshProfiles);
+    return () => {
+      window.removeEventListener("storage", refreshProfiles);
+      window.removeEventListener(VOICE_CLONE_UPDATED_EVENT, refreshProfiles);
+    };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, [recordingUrl]);
+
+  const startSessionRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const nextUrl = URL.createObjectURL(blob);
+        if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+        setRecordingUrl(nextUrl);
+        setRecordingName(`uvb-podcast-session-${new Date().toISOString().replace(/[:.]/g, "-")}.webm`);
+        setRecordingStatus("Local session recording ready.");
+        stream.getTracks().forEach((track) => track.stop());
+      };
+      recorder.start(1000);
+      setIsRecording(true);
+      setIsPaused(false);
+      setRecordingTime(0);
+      setRecordingStatus("Recording local microphone session...");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Microphone capture failed.";
+      setRecordingStatus(message);
+      setIsRecording(false);
+    }
+  };
+
+  const stopSessionRecording = () => {
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+    setIsRecording(false);
+    setIsPaused(false);
+  };
+
+  const togglePauseRecording = () => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    if (recorder.state === "recording") {
+      recorder.pause();
+      setIsPaused(true);
+      setRecordingStatus("Recording paused.");
+    } else if (recorder.state === "paused") {
+      recorder.resume();
+      setIsPaused(false);
+      setRecordingStatus("Recording local microphone session...");
+    }
+  };
 
   const addSeat = () => {
     if (podcastSeats.length < 6) {
@@ -112,13 +184,7 @@ export default function PodcastStudioPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              setIsRecording(!isRecording);
-              if (!isRecording) {
-                setIsPaused(false);
-                setRecordingTime(0);
-              }
-            }}
+            onClick={isRecording ? stopSessionRecording : startSessionRecording}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
               isRecording
                 ? "bg-red-500/20 border border-red-500/40 text-red-400"
@@ -137,7 +203,7 @@ export default function PodcastStudioPage() {
           </button>
           {isRecording && (
             <button
-              onClick={() => setIsPaused(!isPaused)}
+              onClick={togglePauseRecording}
               className="btn-ghost flex items-center gap-2"
             >
               {isPaused ? (
@@ -149,6 +215,27 @@ export default function PodcastStudioPage() {
             </button>
           )}
         </div>
+      </div>
+
+      <div className="uvb-card">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h4 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+              Local Session Capture
+            </h4>
+            <p className="mt-1 text-xs text-uvb-text-muted">{recordingStatus}</p>
+          </div>
+          {recordingUrl && (
+            <a
+              href={recordingUrl}
+              download={recordingName || "uvb-podcast-session.webm"}
+              className="btn-ghost text-sm"
+            >
+              Export Recording
+            </a>
+          )}
+        </div>
+        {recordingUrl && <audio src={recordingUrl} controls className="mt-4 w-full" />}
       </div>
 
       {/* Seats grid */}
@@ -314,7 +401,6 @@ export default function PodcastStudioPage() {
               type="range"
               min="0"
               max="100"
-              defaultValue="80"
               value={masterVolume}
               onChange={(event) => setMasterVolume(Number(event.target.value))}
               className="w-full accent-uvb-neon-green"
@@ -348,7 +434,6 @@ export default function PodcastStudioPage() {
               type="range"
               min="-60"
               max="0"
-              defaultValue="-30"
               value={noiseGate}
               onChange={(event) => setNoiseGate(Number(event.target.value))}
               className="w-full accent-uvb-steel-blue"
@@ -437,9 +522,9 @@ export default function PodcastStudioPage() {
       <div className="flex items-center gap-3 p-4 rounded-lg bg-uvb-deep-teal/10 border border-uvb-deep-teal/20">
         <Users className="w-5 h-5 text-uvb-steel-blue flex-shrink-0" />
         <p className="text-xs text-uvb-text-secondary">
-          VibeVoice-style podcast creation with up to 6 individually configurable
-          seats. Each seat supports pre-existing voice profiles or custom
-          zero-shot voice clones requiring only 3-5 seconds of audio sample.
+          Podcast creation with up to 6 configurable seats, real local session
+          capture, saved clone-profile selection, and staged routing for
+          VibeVoice, Chatterbox Turbo, and Kokoro provider backends.
         </p>
       </div>
     </div>

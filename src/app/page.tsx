@@ -13,6 +13,12 @@ import PodcastStudioPage from "@/app/podcast/PodcastStudioPage";
 import MemoryBankPage from "@/app/memory/MemoryBankPage";
 import SettingsPage from "@/app/settings/SettingsPage";
 import { useEffect, useState } from "react";
+import {
+  applyUiSettings,
+  loadUiSettings,
+  UI_SETTINGS_UPDATED_EVENT,
+  type UiSettings,
+} from "@/lib/uiSettings";
 
 function SectionRenderer({ section }: { section: string }) {
   switch (section) {
@@ -36,6 +42,7 @@ function SectionRenderer({ section }: { section: string }) {
 export default function Home() {
   const { activeSection, sidebarOpen } = useAppStore();
   const [mounted, setMounted] = useState(false);
+  const [uiSettings, setUiSettings] = useState<UiSettings>(() => loadUiSettings());
 
   useEffect(() => {
     const mountFrame = window.requestAnimationFrame(() => setMounted(true));
@@ -46,12 +53,25 @@ export default function Home() {
         useAppStore.getState().setShowCommandPalette(true);
       }
     };
+    const refreshUiSettings = () => {
+      const nextSettings = loadUiSettings();
+      setUiSettings(nextSettings);
+      applyUiSettings(nextSettings);
+    };
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener(UI_SETTINGS_UPDATED_EVENT, refreshUiSettings);
+    window.addEventListener("storage", refreshUiSettings);
     return () => {
       window.cancelAnimationFrame(mountFrame);
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener(UI_SETTINGS_UPDATED_EVENT, refreshUiSettings);
+      window.removeEventListener("storage", refreshUiSettings);
     };
   }, []);
+
+  useEffect(() => {
+    applyUiSettings(uiSettings);
+  }, [uiSettings]);
 
   if (!mounted) {
     return (
@@ -71,10 +91,14 @@ export default function Home() {
   return (
     <div className="galaxy-bg min-h-screen relative overflow-hidden">
       {/* Background effects */}
-      <GalaxyBackground />
-      <GlowOrb color="#39ff14" size={300} x="10%" y="20%" delay={0} />
-      <GlowOrb color="#6b1fa0" size={250} x="80%" y="60%" delay={2} />
-      <GlowOrb color="#4a6fa5" size={200} x="60%" y="10%" delay={4} />
+      {uiSettings.particlesEnabled && (
+        <>
+          <GalaxyBackground />
+          <GlowOrb color={uiSettings.accentColor} size={300} x="10%" y="20%" delay={0} />
+          <GlowOrb color="#6b1fa0" size={250} x="80%" y="60%" delay={2} />
+          <GlowOrb color="#4a6fa5" size={200} x="60%" y="10%" delay={4} />
+        </>
+      )}
 
       {/* Main layout */}
       <div className="relative z-10 flex min-h-screen">
@@ -118,6 +142,7 @@ export default function Home() {
 function CommandPalette() {
   const { showCommandPalette, setShowCommandPalette, setActiveSection } =
     useAppStore();
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (showCommandPalette) {
@@ -137,6 +162,18 @@ function CommandPalette() {
     { label: "Memory Bank", action: () => setActiveSection("memory") },
     { label: "Settings", action: () => setActiveSection("settings") },
   ];
+  const filteredCommands = commands.filter((command) =>
+    command.label.toLowerCase().includes(query.trim().toLowerCase())
+  );
+  const runCommand = (action: () => void) => {
+    action();
+    setShowCommandPalette(false);
+    setQuery("");
+  };
+  const closePalette = () => {
+    setShowCommandPalette(false);
+    setQuery("");
+  };
 
   return (
     <AnimatePresence>
@@ -146,7 +183,7 @@ function CommandPalette() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={() => setShowCommandPalette(false)}
+          onClick={closePalette}
         >
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
           <motion.div
@@ -158,23 +195,33 @@ function CommandPalette() {
           >
             <input
               type="text"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && filteredCommands[0]) {
+                  event.preventDefault();
+                  runCommand(filteredCommands[0].action);
+                } else if (event.key === "Escape") {
+                  closePalette();
+                }
+              }}
               placeholder="Type a command..."
               className="input-field mb-2"
               autoFocus
             />
             <div className="space-y-0.5">
-              {commands.map((cmd) => (
+              {filteredCommands.map((cmd) => (
                 <button
                   key={cmd.label}
-                  onClick={() => {
-                    cmd.action();
-                    setShowCommandPalette(false);
-                  }}
+                  onClick={() => runCommand(cmd.action)}
                   className="w-full text-left px-3 py-2 rounded-lg text-sm text-uvb-text-secondary hover:text-uvb-text-primary hover:bg-uvb-light-gray/30 transition-colors"
                 >
                   {cmd.label}
                 </button>
               ))}
+              {!filteredCommands.length && (
+                <p className="px-3 py-2 text-sm text-uvb-text-muted">No matching commands.</p>
+              )}
             </div>
           </motion.div>
         </motion.div>
