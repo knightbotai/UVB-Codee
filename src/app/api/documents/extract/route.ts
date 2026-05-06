@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import JSZip from "jszip";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import path from "node:path";
@@ -20,6 +21,33 @@ function capExtractedText(text: string) {
   if (cleanText.length <= MAX_EXTRACTED_CHARS) return cleanText;
 
   return `${cleanText.slice(0, MAX_EXTRACTED_CHARS)}\n\n[Document truncated at ${MAX_EXTRACTED_CHARS} characters.]`;
+}
+
+function xmlText(value: string) {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function extractZipXmlText(buffer: Buffer, filePrefix: string, heading: string) {
+  const zip = await JSZip.loadAsync(buffer);
+  const entries = Object.values(zip.files)
+    .filter((entry) => !entry.dir && entry.name.startsWith(filePrefix) && entry.name.endsWith(".xml"))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const sections: string[] = [];
+
+  for (const entry of entries) {
+    const text = xmlText(await entry.async("text"));
+    if (text) sections.push(`${heading} ${sections.length + 1} (${entry.name})\n${text}`);
+  }
+
+  return sections.join("\n\n");
 }
 
 async function extractPdf(buffer: Buffer) {
@@ -52,7 +80,23 @@ async function extractDocumentText(fileName: string, mediaType: string, buffer: 
     return result.value;
   }
 
-  throw new Error("Unsupported document type. PDF and DOCX extraction are available.");
+  if (
+    mediaType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    extension === ".pptx"
+  ) {
+    return extractZipXmlText(buffer, "ppt/slides/slide", "Slide");
+  }
+
+  if (
+    mediaType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    extension === ".xlsx"
+  ) {
+    const sharedStrings = await extractZipXmlText(buffer, "xl/sharedStrings", "Shared strings");
+    const sheets = await extractZipXmlText(buffer, "xl/worksheets/sheet", "Sheet");
+    return [sharedStrings, sheets].filter(Boolean).join("\n\n");
+  }
+
+  throw new Error("Unsupported document type. PDF, DOCX, PPTX, and XLSX extraction are available.");
 }
 
 export async function POST(request: NextRequest) {

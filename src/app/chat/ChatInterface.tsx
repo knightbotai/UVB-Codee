@@ -85,7 +85,7 @@ const TEXT_DOCUMENT_EXTENSIONS = new Set([
   ".sh",
   ".sql",
 ]);
-const EXTRACTABLE_DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx"]);
+const EXTRACTABLE_DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx", ".pptx", ".xlsx"]);
 
 type ChatModelContentPart =
   | { type: "text"; text: string }
@@ -211,6 +211,8 @@ function isExtractableDocument(file: File) {
   return (
     file.type === "application/pdf" ||
     file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    file.type === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
     EXTRACTABLE_DOCUMENT_EXTENSIONS.has(extension)
   );
 }
@@ -2769,7 +2771,7 @@ export default function ChatInterface() {
                   <button
                     onClick={() =>
                       openAttachmentPicker(
-                        "video/*,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.log,.xml,.yaml,.yml,.ini,.toml,.env,.js,.jsx,.ts,.tsx,.mjs,.cjs,.css,.html,.py,.ps1,.sh,.sql,.pdf"
+                        "video/*,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.log,.xml,.yaml,.yml,.ini,.toml,.env,.js,.jsx,.ts,.tsx,.mjs,.cjs,.css,.html,.py,.ps1,.sh,.sql,.pdf,.docx,.pptx,.xlsx"
                       )
                     }
                     className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
