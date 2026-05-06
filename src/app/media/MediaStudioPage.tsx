@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import Image from "next/image";
 import {
   PhotoIcon,
   FilmIcon,
@@ -19,6 +20,12 @@ interface AnalysisResult {
   content: string;
 }
 
+interface StoryboardFrame {
+  index: number;
+  timestamp: string;
+  dataUrl: string;
+}
+
 const IMAGE_CAPTION_SAMPLE =
   "A futuristic control room with holographic displays showing real-time data streams. Multiple workstations are arranged in a circular pattern, each with glowing cyan interfaces. The room has a dark metallic aesthetic with subtle blue accent lighting. A central holographic globe displays rotating network connections.";
 
@@ -30,50 +37,120 @@ export default function MediaStudioPage() {
   const [hasMedia, setHasMedia] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [results, setResults] = useState<AnalysisResult[]>([]);
+  const [selectedFileName, setSelectedFileName] = useState("");
+  const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
+  const [storyboardFrames, setStoryboardFrames] = useState<StoryboardFrame[]>([]);
+  const [analysisError, setAnalysisError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleAnalyze = () => {
+  useEffect(() => {
+    return () => {
+      if (mediaPreviewUrl) URL.revokeObjectURL(mediaPreviewUrl);
+    };
+  }, [mediaPreviewUrl]);
+
+  const resetMedia = () => {
+    if (mediaPreviewUrl) URL.revokeObjectURL(mediaPreviewUrl);
+    setMediaPreviewUrl("");
+    setSelectedFileName("");
+    setStoryboardFrames([]);
+    setResults([]);
+    setHasMedia(false);
+    setIsAnalyzing(false);
+    setAnalysisError("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const analyzeDemoImage = () => {
     setHasMedia(true);
     setIsAnalyzing(true);
     setTimeout(() => {
       setIsAnalyzing(false);
-      if (activeTab === "image") {
-        setResults([
-          { type: "Caption", content: IMAGE_CAPTION_SAMPLE },
-          {
-            type: "Objects Detected",
-            content: "Monitors (6), Keyboard (1), Desk (1), Holographic display (1), Person (1), Globe model (1)",
-          },
-          {
-            type: "Scene Classification",
-            content: "Technology workspace / Command center (confidence: 96.2%)",
-          },
-          {
-            type: "Dominant Colors",
-            content: "Cyan (#00bcd4), Dark navy (#0a1628), Silver (#c0c0c0), Blue (#2196f3)",
-          },
-          {
-            type: "Text Detected (OCR)",
-            content: '"SYSTEMS ONLINE" - "KNIGHTBOT CORE v0.1" - "MEMORY: 64GB" - "GPU: ACTIVE"',
-          },
-        ]);
-      } else {
-        setResults([
-          { type: "Scene Description", content: VIDEO_UNDERSTANDING_SAMPLE },
-          {
-            type: "Key Frames Analysis",
-            content: "4 distinct scenes detected. Primary action: technology demonstration. Motion type: smooth camera movements with static subject interaction.",
-          },
-          {
-            type: "Audio Track",
-            content: "Ambient electronic music, keyboard typing sounds, subtle UI interaction sounds. No speech detected.",
-          },
-          {
-            type: "Transcription",
-            content: "No dialog detected. Text overlays identified: 'KNIGHTBOT INTERFACE', 'COMMAND CENTER'.",
-          },
-        ]);
-      }
+      setResults([
+        { type: "Caption", content: IMAGE_CAPTION_SAMPLE },
+        {
+          type: "Objects Detected",
+          content: "Monitors (6), Keyboard (1), Desk (1), Holographic display (1), Person (1), Globe model (1)",
+        },
+        {
+          type: "Scene Classification",
+          content: "Technology workspace / Command center (confidence: 96.2%)",
+        },
+        {
+          type: "Dominant Colors",
+          content: "Cyan (#00bcd4), Dark navy (#0a1628), Silver (#c0c0c0), Blue (#2196f3)",
+        },
+        {
+          type: "Text Detected (OCR)",
+          content: '"SYSTEMS ONLINE" - "KNIGHTBOT CORE v0.1" - "MEMORY: 64GB" - "GPU: ACTIVE"',
+        },
+      ]);
     }, 2000);
+  };
+
+  const handleAnalyze = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setAnalysisError("");
+    setStoryboardFrames([]);
+    setResults([]);
+    setSelectedFileName(file.name);
+    setHasMedia(true);
+    setIsAnalyzing(true);
+    if (mediaPreviewUrl) URL.revokeObjectURL(mediaPreviewUrl);
+    setMediaPreviewUrl(URL.createObjectURL(file));
+
+    if (activeTab === "image") {
+      analyzeDemoImage();
+      return;
+    }
+
+    const payload = new FormData();
+    payload.append("file", file, file.name);
+    payload.append(
+      "prompt",
+      "Describe the essence of this video with attention to timeline, scene changes, mood, actions, visual details, and audio."
+    );
+
+    try {
+      const response = await fetch("/api/media/video", {
+        method: "POST",
+        body: payload,
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        analysis?: string;
+        transcript?: string;
+        durationSeconds?: number;
+        frames?: StoryboardFrame[];
+        error?: string;
+      };
+
+      if (!response.ok || !data.analysis) {
+        throw new Error(data.error || `Video analysis failed with ${response.status}.`);
+      }
+
+      setStoryboardFrames(data.frames ?? []);
+      setResults([
+        { type: "Sophia Video Analysis", content: data.analysis },
+        {
+          type: "Audio Transcript",
+          content: data.transcript?.trim() || "No audio transcript was available.",
+        },
+        {
+          type: "Storyboard",
+          content: data.frames?.length
+            ? `${data.frames.length} frames sampled across ${data.durationSeconds?.toFixed(1) ?? "unknown"} seconds.`
+            : "No frames were extracted.",
+        },
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown video analysis error.";
+      setAnalysisError(message);
+      setResults([{ type: "Analysis Error", content: message }]);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   return (
@@ -83,8 +160,7 @@ export default function MediaStudioPage() {
         <button
           onClick={() => {
             setActiveTab("image");
-            setResults([]);
-            setHasMedia(false);
+            resetMedia();
           }}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
             activeTab === "image"
@@ -98,8 +174,7 @@ export default function MediaStudioPage() {
         <button
           onClick={() => {
             setActiveTab("video");
-            setResults([]);
-            setHasMedia(false);
+            resetMedia();
           }}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
             activeTab === "video"
@@ -133,13 +208,14 @@ export default function MediaStudioPage() {
                   <p className="text-xs text-uvb-text-muted">
                     {activeTab === "image"
                       ? "Supports JPG, PNG, WebP, GIF, BMP"
-                      : "Supports MP4, WebM, MOV, AVI (max 500MB)"}
+                      : "Supports MP4, WebM, MOV, AVI; local processing avoids Telegram cloud limits"}
                   </p>
                 </div>
                 <label className="btn-primary cursor-pointer inline-flex items-center gap-2">
                   <ArrowUpTrayIcon className="w-4 h-4" />
                   Choose {activeTab === "image" ? "Image" : "Video"}
                   <input
+                    ref={fileInputRef}
                     type="file"
                     className="hidden"
                     accept={activeTab === "image" ? "image/*" : "video/*"}
@@ -149,7 +225,7 @@ export default function MediaStudioPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center gap-4">
-                <div className="w-full aspect-video bg-uvb-dark-gray/60 rounded-lg flex items-center justify-center">
+                <div className="w-full aspect-video bg-uvb-dark-gray/60 rounded-lg flex items-center justify-center overflow-hidden">
                   {isAnalyzing ? (
                     <motion.div
                       className="flex flex-col items-center gap-3"
@@ -162,23 +238,33 @@ export default function MediaStudioPage() {
                       </span>
                     </motion.div>
                   ) : (
-                    <div className="flex items-center gap-2 text-uvb-neon-green">
-                      {activeTab === "image" ? (
+                    mediaPreviewUrl && activeTab === "video" ? (
+                      <video
+                        src={mediaPreviewUrl}
+                        controls
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <div className="flex items-center gap-2 text-uvb-neon-green">
+                        {activeTab === "image" ? (
                         <EyeIcon className="w-8 h-8" />
                       ) : (
                         <FilmIcon className="w-8 h-8" />
                       )}
-                      <span className="text-sm font-medium">
-                        Analysis Complete
-                      </span>
-                    </div>
+                        <span className="text-sm font-medium">
+                          Analysis Complete
+                        </span>
+                      </div>
+                    )
                   )}
                 </div>
+                {selectedFileName && (
+                  <p className="max-w-full truncate text-xs text-uvb-text-muted">
+                    {selectedFileName}
+                  </p>
+                )}
                 <button
-                  onClick={() => {
-                    setHasMedia(false);
-                    setResults([]);
-                  }}
+                  onClick={resetMedia}
                   className="btn-ghost text-sm"
                 >
                   Upload New {activeTab === "image" ? "Image" : "Video"}
@@ -202,6 +288,11 @@ export default function MediaStudioPage() {
             </div>
           ) : (
             <div className="space-y-3">
+              {analysisError && (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                  {analysisError}
+                </div>
+              )}
               {results.map((result, i) => (
                 <motion.div
                   key={result.type}
@@ -218,6 +309,28 @@ export default function MediaStudioPage() {
                   </p>
                 </motion.div>
               ))}
+              {storyboardFrames.length > 0 && (
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  {storyboardFrames.map((frame) => (
+                    <div
+                      key={`${frame.index}-${frame.timestamp}`}
+                      className="overflow-hidden rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40"
+                    >
+                      <Image
+                        src={frame.dataUrl}
+                        alt={`Storyboard frame ${frame.index} at ${frame.timestamp}`}
+                        width={480}
+                        height={270}
+                        unoptimized
+                        className="aspect-video w-full object-cover"
+                      />
+                      <div className="px-2 py-1 text-[10px] text-uvb-text-muted">
+                        Frame {frame.index} · {frame.timestamp}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
