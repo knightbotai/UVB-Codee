@@ -82,18 +82,21 @@ export default function Home() {
 
         {/* Main content area */}
         <motion.div
-          className="flex-1 flex flex-col min-h-screen"
-          animate={{ marginLeft: sidebarOpen ? 256 : 64 }}
+          className="flex min-h-screen min-w-0 flex-col overflow-hidden"
+          animate={{
+            marginLeft: sidebarOpen ? 256 : 64,
+            width: sidebarOpen ? "calc(100% - 256px)" : "calc(100% - 64px)",
+          }}
           transition={{ duration: 0.3, ease: "easeInOut" }}
         >
           <Header />
 
           {/* Page content */}
-          <main className="flex-1 overflow-hidden">
+          <main className="min-w-0 flex-1 overflow-hidden">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeSection}
-                className="h-full"
+                className="h-full min-w-0 overflow-hidden"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}

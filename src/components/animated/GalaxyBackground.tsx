@@ -72,6 +72,12 @@ export default function GalaxyBackground() {
     window.addEventListener("mousemove", handleMouseMove);
 
     const animate = () => {
+      if (document.body.classList.contains("uvb-live-voice-active")) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        animFrameRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const particles = particlesRef.current;

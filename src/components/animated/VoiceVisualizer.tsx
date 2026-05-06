@@ -21,7 +21,9 @@ export default function VoiceVisualizer({
   const [bars, setBars] = useState<number[]>(randomBars);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasLiveLevels = Boolean(levels && levels.length > 0);
-  const displayBars = hasLiveLevels ? levels!.map((l) => Math.max(2, l * 60)) : bars;
+  const displayBars = hasLiveLevels
+    ? levels!.map((level) => Math.max(2, Math.min(60, level * 60)))
+    : bars;
 
   useEffect(() => {
     if (!isActive) {
@@ -45,7 +47,7 @@ export default function VoiceVisualizer({
   }, [isActive, hasLiveLevels]);
 
   return (
-    <div className="flex items-center justify-center gap-[2px] h-16">
+    <div className="flex h-16 items-center justify-center gap-[2px]">
       <AnimatePresence>
         {displayBars.map((height, i) => (
           <motion.div

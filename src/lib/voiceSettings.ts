@@ -1,6 +1,8 @@
 export interface VoiceSettings {
   sttUrl: string;
   sttModel: string;
+  sttLanguage: string;
+  sttPrompt: string;
   ttsUrl: string;
   ttsVoice: string;
   autoSpeak: boolean;
@@ -25,10 +27,14 @@ export interface VoiceSettings {
 
 export const VOICE_SETTINGS_STORAGE_KEY = "uvb:voice-settings";
 export const VOICE_SETTINGS_UPDATED_EVENT = "uvb:voice-settings-updated";
+const LEGACY_DEFAULT_STT_MODEL = "Systran/faster-whisper-large-v3";
 
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   sttUrl: "http://127.0.0.1:8001/v1/audio/transcriptions",
-  sttModel: "Systran/faster-whisper-large-v3",
+  sttModel: "Systran/faster-distil-whisper-large-v3",
+  sttLanguage: "en",
+  sttPrompt:
+    "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly.",
   ttsUrl: "http://127.0.0.1:8880/v1/audio/speech",
   ttsVoice: "af_nova",
   autoSpeak: true,
@@ -48,10 +54,16 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
 
 export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): VoiceSettings {
   const volume = Number(settings.volume);
+  const sttModel = settings.sttModel?.trim();
 
   return {
     sttUrl: settings.sttUrl?.trim() || DEFAULT_VOICE_SETTINGS.sttUrl,
-    sttModel: settings.sttModel?.trim() || DEFAULT_VOICE_SETTINGS.sttModel,
+    sttModel:
+      sttModel && sttModel !== LEGACY_DEFAULT_STT_MODEL
+        ? sttModel
+        : DEFAULT_VOICE_SETTINGS.sttModel,
+    sttLanguage: settings.sttLanguage?.trim() || DEFAULT_VOICE_SETTINGS.sttLanguage,
+    sttPrompt: settings.sttPrompt?.trim() || DEFAULT_VOICE_SETTINGS.sttPrompt,
     ttsUrl: settings.ttsUrl?.trim() || DEFAULT_VOICE_SETTINGS.ttsUrl,
     ttsVoice: settings.ttsVoice?.trim() || DEFAULT_VOICE_SETTINGS.ttsVoice,
     autoSpeak: settings.autoSpeak ?? DEFAULT_VOICE_SETTINGS.autoSpeak,

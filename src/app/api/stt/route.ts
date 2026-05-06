@@ -3,7 +3,20 @@ import { NextRequest, NextResponse } from "next/server";
 const DEFAULT_STT_URL =
   process.env.UVB_STT_URL ?? "http://127.0.0.1:8001/v1/audio/transcriptions";
 const DEFAULT_STT_MODEL =
-  process.env.UVB_STT_MODEL ?? "Systran/faster-whisper-large-v3";
+  process.env.UVB_STT_MODEL ?? "Systran/faster-distil-whisper-large-v3";
+const DEFAULT_STT_LANGUAGE = process.env.UVB_STT_LANGUAGE ?? "en";
+const DEFAULT_STT_RESPONSE_FORMAT = process.env.UVB_STT_RESPONSE_FORMAT ?? "json";
+const DEFAULT_STT_TEMPERATURE = process.env.UVB_STT_TEMPERATURE ?? "0";
+const DEFAULT_STT_PROMPT =
+  process.env.UVB_STT_PROMPT ??
+  "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly.";
+
+function appendOptional(payload: FormData, key: string, value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim();
+  if (text) {
+    payload.append(key, text);
+  }
+}
 
 export async function POST(request: NextRequest) {
   let incoming: FormData;
@@ -24,6 +37,15 @@ export async function POST(request: NextRequest) {
   const payload = new FormData();
   payload.append("file", file, file.name || "recording.webm");
   payload.append("model", model);
+  appendOptional(payload, "language", incoming.get("language") || DEFAULT_STT_LANGUAGE);
+  appendOptional(payload, "prompt", incoming.get("prompt") || DEFAULT_STT_PROMPT);
+  appendOptional(
+    payload,
+    "response_format",
+    incoming.get("response_format") || DEFAULT_STT_RESPONSE_FORMAT
+  );
+  appendOptional(payload, "temperature", incoming.get("temperature") || DEFAULT_STT_TEMPERATURE);
+  appendOptional(payload, "hotwords", incoming.get("hotwords") || process.env.UVB_STT_HOTWORDS || "");
 
   try {
     const response = await fetch(endpoint, {

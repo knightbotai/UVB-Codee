@@ -22,6 +22,7 @@ from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.stt import OpenAISTTService
 from pipecat.services.openai.tts import OpenAITTSService
+from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
@@ -44,6 +45,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "interruptible and avoid reading Markdown syntax aloud."
 )
 
+DEFAULT_STT_PROMPT = (
+    "Transcribe spoken English with natural punctuation, capitalization, sentence "
+    "boundaries, commas, periods, and question marks. Preserve the speaker's words exactly."
+)
+
 
 def env(name: str, default: str) -> str:
     return os.getenv(name, default).strip()
@@ -56,6 +62,13 @@ def normalize_base_url(value: str) -> str:
 
 def truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def stt_language(value: Any) -> Language:
+    try:
+        return Language(str(value or env("UVB_STT_LANGUAGE", "en")).strip())
+    except ValueError:
+        return Language.EN
 
 
 def merge_request_settings(payload: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -146,7 +159,14 @@ def create_app() -> FastAPI:
             base_url=normalize_base_url(
                 str(voice_settings.get("sttUrl") or env("UVB_STT_URL", "http://127.0.0.1:8001/v1"))
             ),
-            model=str(voice_settings.get("sttModel") or env("UVB_STT_MODEL", "Systran/faster-whisper-large-v3")),
+            model=str(voice_settings.get("sttModel") or env("UVB_STT_MODEL", "Systran/faster-distil-whisper-large-v3")),
+            language=stt_language(voice_settings.get("sttLanguage")),
+            prompt=str(
+                voice_settings.get("sttPrompt")
+                or os.getenv("UVB_STT_PROMPT")
+                or DEFAULT_STT_PROMPT
+            ),
+            temperature=float(voice_settings.get("sttTemperature") or env("UVB_STT_TEMPERATURE", "0")),
         )
         vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(), audio_idle_timeout=1.0)
         pipeline_steps = [transport.input(), vad, stt]
@@ -188,6 +208,8 @@ def create_app() -> FastAPI:
                     context_aggregator.assistant(),
                 ]
             )
+        else:
+            pipeline_steps.append(transport.output())
 
         pipeline = Pipeline(pipeline_steps)
         task = PipelineTask(

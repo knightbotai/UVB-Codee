@@ -1,28 +1,31 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { useAppStore, type ChatMessage } from "@/stores/appStore";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { motion } from "framer-motion";
+import Image from "next/image";
+import { useAppStore, type ChatAttachment, type ChatMessage } from "@/stores/appStore";
 import {
   PaperAirplaneIcon,
   MicrophoneIcon,
   StopIcon,
   PlusIcon,
   ArrowPathIcon,
-  DocumentDuplicateIcon,
-  BookmarkIcon,
   PhotoIcon,
   FilmIcon,
   PlayIcon,
   PauseIcon,
   SpeakerXMarkIcon,
-  ArrowUturnLeftIcon,
   PencilSquareIcon,
   TrashIcon,
   CheckIcon,
   XMarkIcon,
+  ClipboardDocumentIcon,
+  BookmarkIcon,
+  ArrowUturnRightIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
 } from "@heroicons/react/24/outline";
-import { Bot, User, Sparkles } from "lucide-react";
+import { Bot, Sparkles } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
 import {
   loadModelSettings,
@@ -44,6 +47,24 @@ const LIVE_VOICE_MIN_RMS_DELTA = 0.014;
 const LIVE_VOICE_NOISE_MULTIPLIER = 2.1;
 const LIVE_VOICE_SILENCE_MS = 950;
 const LIVE_VOICE_MIN_TURN_MS = 500;
+const LIVE_VOICE_STOP_FLUSH_MS = 2400;
+const LIVE_VOICE_FINAL_FLUSH_MS = 1500;
+const LIVE_VOICE_BUSY_RETRY_MS = 900;
+const MAX_IMAGE_ATTACHMENTS = 4;
+const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_MODEL_IMAGE_PIXELS = 1_200_000;
+const MAX_MODEL_IMAGE_SIDE = 1600;
+const MODEL_IMAGE_JPEG_QUALITY = 0.86;
+const DEFAULT_IMAGE_PROMPT = "Describe this image in great detail.";
+
+type ChatModelContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail: "auto" } };
+
+type ChatModelMessage = {
+  role: "user" | "assistant";
+  content: string | ChatModelContentPart[];
+};
 
 type PipecatClientLike = {
   connect: (params?: unknown) => Promise<unknown>;
@@ -53,8 +74,10 @@ type PipecatClientLike = {
 };
 
 type PipecatTranscriptData = {
-  text: string;
+  text?: string;
   final?: boolean;
+  finalized?: boolean;
+  is_final?: boolean;
 };
 
 type PipecatParticipant = {
@@ -71,6 +94,121 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("Could not read audio chunk."));
     reader.readAsDataURL(blob);
   });
+}
+
+async function imageBitmapFromFile(file: File): Promise<ImageBitmap | HTMLImageElement> {
+  if ("createImageBitmap" in window) {
+    try {
+      return await createImageBitmap(file);
+    } catch {
+      // Fall back to an HTMLImageElement for formats the browser cannot bitmap directly.
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new window.Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not decode image."));
+    };
+    image.src = url;
+  });
+}
+
+async function fileToModelImageDataUrl(file: File): Promise<{ dataUrl: string; mediaType: string; size: number }> {
+  const image = await imageBitmapFromFile(file);
+  const sourceWidth = image.width;
+  const sourceHeight = image.height;
+  const pixelScale = Math.sqrt(MAX_MODEL_IMAGE_PIXELS / Math.max(1, sourceWidth * sourceHeight));
+  const sideScale = MAX_MODEL_IMAGE_SIDE / Math.max(sourceWidth, sourceHeight, 1);
+  const scale = Math.min(1, pixelScale, sideScale);
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not prepare image canvas.");
+
+  context.drawImage(image, 0, 0, width, height);
+  if ("close" in image && typeof image.close === "function") {
+    image.close();
+  }
+
+  const dataUrl = canvas.toDataURL("image/jpeg", MODEL_IMAGE_JPEG_QUALITY);
+  const base64Length = dataUrl.split(",")[1]?.length ?? 0;
+  const size = Math.floor((base64Length * 3) / 4);
+
+  return { dataUrl, mediaType: "image/jpeg", size };
+}
+
+function buildModelContent(text: string, attachments: ChatAttachment[] = []): ChatModelMessage["content"] {
+  const imageAttachments = attachments.filter(
+    (attachment) => attachment.kind === "image" && attachment.dataUrl
+  );
+  if (!imageAttachments.length) return text;
+
+  return [
+    { type: "text", text },
+    ...imageAttachments.map((attachment) => ({
+      type: "image_url" as const,
+      image_url: { url: attachment.dataUrl ?? "", detail: "auto" as const },
+    })),
+  ];
+}
+
+function isPipecatFinalTranscript(data: PipecatTranscriptData): boolean {
+  const finalValue = data.final ?? data.finalized ?? data.is_final;
+  return finalValue !== false;
+}
+
+function appendPipecatTranscript(current: string, next: string): string {
+  const cleanNext = next.trim();
+  if (!cleanNext) return current.trim();
+
+  const cleanCurrent = current.trim();
+  if (!cleanCurrent) return cleanNext;
+  if (cleanCurrent.endsWith(cleanNext)) return cleanCurrent;
+
+  return `${cleanCurrent} ${cleanNext}`.trim();
+}
+
+function timestampToDate(value: unknown): Date {
+  if (typeof value === "number" || typeof value === "string" || value instanceof Date) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as { timestamp?: unknown; time?: unknown; value?: unknown };
+    return timestampToDate(record.timestamp ?? record.time ?? record.value ?? Date.now());
+  }
+
+  return new Date();
+}
+
+function safeDisplayText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? `${value}` : "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value == null) return "";
+
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized ?? "";
+  } catch {
+    return "[unreadable message]";
+  }
+}
+
+function safeMessageRole(value: unknown): "user" | "assistant" | "system" {
+  return value === "user" || value === "assistant" || value === "system" ? value : "assistant";
 }
 
 function formatMicrophoneError(error: unknown) {
@@ -193,7 +331,7 @@ async function fetchChatConfig(settings: ModelSettings): Promise<ChatConfig | nu
 }
 
 async function sendChatToModel(
-  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  messages: ChatModelMessage[],
   settings: ModelSettings,
   systemPrompt: string,
   signal?: AbortSignal
@@ -253,6 +391,8 @@ export default function ChatInterface() {
   const [liveTranscript, setLiveTranscript] = useState("");
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [editingThreadTitle, setEditingThreadTitle] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [expandedImage, setExpandedImage] = useState<ChatAttachment | null>(null);
   const [liveMetrics, setLiveMetrics] = useState<{
     sttMs?: number;
     llmMs?: number;
@@ -263,7 +403,9 @@ export default function ChatInterface() {
     vadProvider?: string;
     transport?: string;
   } | null>(null);
+  const messagesTopRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollerRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -286,20 +428,87 @@ export default function ChatInterface() {
   const pipecatPendingTranscriptRef = useRef("");
   const liveUserSpeakingRef = useRef(false);
   const liveMicMutedRef = useRef(false);
+  const liveLastLevelUiAtRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const voiceFrameRef = useRef<number | null>(null);
   const discardRecordingRef = useRef(false);
   const recordingActionRef = useRef<"edit" | "send">("edit");
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const speechAudioUrlRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
+  const scrollMessagesToTop = () => {
+    const scroller = messagesScrollerRef.current;
+    if (!scroller) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    messagesTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    scroller.scrollTo({ top: 0, behavior: "smooth" });
+    window.requestAnimationFrame(() => {
+      scroller.scrollTop = 0;
+      messagesTopRef.current?.scrollIntoView({ behavior: "auto", block: "start" });
+    });
+  };
+
+  const scrollMessagesToBottom = () => {
+    const scroller = messagesScrollerRef.current;
+    if (!scroller) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      return;
+    }
+
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    window.requestAnimationFrame(() => {
+      scroller.scrollTop = scroller.scrollHeight;
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
+  };
+
+  const revokeSpeechAudioUrl = useCallback((url = speechAudioUrlRef.current) => {
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    if (speechAudioUrlRef.current === url) {
+      speechAudioUrlRef.current = null;
+    }
+  }, []);
+
+  const clearSpeechAudioSource = useCallback(() => {
+    const audio = audioPlayerRef.current;
+    if (!audio) {
+      revokeSpeechAudioUrl();
+      return;
+    }
+
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    revokeSpeechAudioUrl();
+  }, [revokeSpeechAudioUrl]);
+
   useEffect(() => {
     liveVoiceEnabledRef.current = liveVoiceEnabled;
+    document.body.classList.toggle("uvb-live-voice-active", liveVoiceEnabled);
+
+    return () => {
+      document.body.classList.remove("uvb-live-voice-active");
+    };
   }, [liveVoiceEnabled]);
+
+  useEffect(() => {
+    return () => {
+      clearSpeechAudioSource();
+      if (pipecatAudioRef.current) {
+        pipecatAudioRef.current.pause();
+        pipecatAudioRef.current.srcObject = null;
+      }
+    };
+  }, [clearSpeechAudioSource]);
 
   useEffect(() => {
     const refreshConfig = () => {
@@ -439,7 +648,11 @@ export default function ChatInterface() {
       return;
     }
 
-    await sendMessageWithText(previousUserMessage.content, previousUserMessage.type);
+    await sendMessageWithText(
+      previousUserMessage.content,
+      previousUserMessage.type,
+      previousUserMessage.attachments ?? []
+    );
   };
 
   const toggleBookmark = (message: ChatMessage) => {
@@ -471,11 +684,12 @@ export default function ChatInterface() {
 
   const stopSpeech = () => {
     if (!audioPlayerRef.current) return;
-    audioPlayerRef.current.pause();
-    audioPlayerRef.current.currentTime = 0;
+    clearSpeechAudioSource();
     setIsSpeaking(false);
     setIsSpeechPaused(false);
     setSpeechProgress(0);
+    setSpeechDuration(0);
+    setHasSpeechReady(false);
     if (liveVoiceEnabledRef.current && liveTurnStateRef.current === "speaking") {
       liveTurnStateRef.current = "idle";
       setLiveVoicePhase("idle");
@@ -602,6 +816,8 @@ export default function ChatInterface() {
     }
 
     audioPlayerRef.current.pause();
+    revokeSpeechAudioUrl();
+    speechAudioUrlRef.current = audioUrl;
     audioPlayerRef.current.src = audioUrl;
     audioPlayerRef.current.volume = voiceSettings.volume;
     audioPlayerRef.current.onplay = () => {
@@ -622,7 +838,7 @@ export default function ChatInterface() {
       setSpeechDuration(audioPlayerRef.current?.duration || 0);
     };
     audioPlayerRef.current.onended = () => {
-      URL.revokeObjectURL(audioUrl);
+      revokeSpeechAudioUrl(audioUrl);
       setIsSpeaking(false);
       setIsSpeechPaused(false);
       setSpeechProgress(0);
@@ -638,14 +854,23 @@ export default function ChatInterface() {
     });
   };
 
-  const sendMessageWithText = async (userInput: string, messageType: ChatMessage["type"] = "text") => {
-    if (!userInput.trim()) return;
+  const sendMessageWithText = async (
+    userInput: string,
+    messageType: ChatMessage["type"] = "text",
+    attachments = pendingAttachments
+  ) => {
+    const attachedImages = attachments.filter((attachment) => attachment.kind === "image");
+    const promptText = userInput.trim() || (attachedImages.length ? DEFAULT_IMAGE_PROMPT : "");
+    if (!promptText && !attachments.length) return;
 
     let threadId = activeThreadId;
     if (!threadId) {
       const thread = {
         id: generateId(),
-        title: userInput.slice(0, 40) + (userInput.length > 40 ? "..." : ""),
+        title:
+          promptText.slice(0, 40) ||
+          attachedImages[0]?.name.slice(0, 40) ||
+          "Image conversation",
         messages: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -659,12 +884,14 @@ export default function ChatInterface() {
     const userMsg: ChatMessage = {
       id: generateId(),
       role: "user",
-      content: userInput,
+      content: promptText,
       timestamp: Date.now(),
-      type: messageType,
+      type: attachedImages.length ? "image" : messageType,
+      attachments: attachments.length ? attachments : undefined,
     };
     addMessage(threadId!, userMsg);
     setInput("");
+    setPendingAttachments([]);
     setIsTyping(true);
     setLastFailedInput(null);
     setActivityStatus("Thinking through the local model...");
@@ -673,7 +900,7 @@ export default function ChatInterface() {
     chatAbortRef.current = abortController;
 
     const currentThread = useAppStore.getState().threads.find((thread) => thread.id === threadId);
-    const priorMessages: Array<{ role: "user" | "assistant"; content: string }> =
+    const priorMessages: ChatModelMessage[] =
       currentThread?.messages
         .filter((message) => message.id !== userMsg.id)
         .filter((message) => message.role === "user" || message.role === "assistant")
@@ -685,7 +912,7 @@ export default function ChatInterface() {
     try {
       const response = await sendChatToModel([
         ...priorMessages,
-        { role: "user", content: userInput },
+        { role: "user", content: buildModelContent(promptText, attachments) },
       ], modelSettings, voiceSettings.systemPrompt, abortController.signal);
       const aiMsg: ChatMessage = {
         id: generateId(),
@@ -706,6 +933,18 @@ export default function ChatInterface() {
         return;
       }
       const message = error instanceof Error ? error.message : "Unknown local model error.";
+      if (attachedImages.length && message.toLowerCase().includes("at most zero images")) {
+        addMessage(threadId!, {
+          id: generateId(),
+          role: "assistant",
+          content:
+            "The image uploaded and is saved in the chat, but the active local model is text-only right now. It rejected the request because this model is configured to allow zero images per prompt. Switch UVB to a vision-capable local model or vision endpoint, then send the image again and I can describe it.",
+          timestamp: Date.now(),
+          type: "text",
+        });
+        setActivityStatus("Image attached, but the active model does not support vision.");
+        return;
+      }
       addMessage(threadId!, {
         id: generateId(),
         role: "assistant",
@@ -713,7 +952,7 @@ export default function ChatInterface() {
         timestamp: Date.now(),
         type: "text",
       });
-      setLastFailedInput(userInput);
+      setLastFailedInput(promptText);
       setActivityStatus("Model failed. Settings or service health need attention.");
     } finally {
       if (chatAbortRef.current === abortController) {
@@ -785,8 +1024,9 @@ export default function ChatInterface() {
         type: "voice",
       });
 
-      pipecatPendingTranscriptRef.current = "";
-      setLiveTranscript("");
+      if (!pipecatPendingTranscriptRef.current.trim()) {
+        setLiveTranscript("");
+      }
 
       await speakText(response).catch((error) => {
         const message = error instanceof Error ? error.message : "TTS failed.";
@@ -813,6 +1053,14 @@ export default function ChatInterface() {
     } finally {
       pipecatFallbackInFlightRef.current = false;
       setIsTyping(false);
+      if (
+        pipecatPendingTranscriptRef.current.trim() &&
+        liveVoiceEnabledRef.current &&
+        !liveUserSpeakingRef.current &&
+        !liveMicMutedRef.current
+      ) {
+        scheduleLiveVoiceTurnFlush(LIVE_VOICE_BUSY_RETRY_MS);
+      }
     }
   };
 
@@ -840,11 +1088,16 @@ export default function ChatInterface() {
       if (
         !liveVoiceEnabledRef.current ||
         liveUserSpeakingRef.current ||
-        liveMicMutedRef.current ||
-        pipecatFallbackInFlightRef.current
+        liveMicMutedRef.current
       ) {
         return;
       }
+
+      if (pipecatFallbackInFlightRef.current) {
+        scheduleLiveVoiceTurnFlush(LIVE_VOICE_BUSY_RETRY_MS);
+        return;
+      }
+
       flushLiveVoiceTurn();
     }, delayMs);
   };
@@ -858,6 +1111,8 @@ export default function ChatInterface() {
     formData.append("file", audioBlob, "uvb-recording.webm");
     formData.append("endpoint", voiceSettings.sttUrl);
     formData.append("model", voiceSettings.sttModel);
+    formData.append("language", voiceSettings.sttLanguage);
+    formData.append("prompt", voiceSettings.sttPrompt);
 
     const response = await fetch("/api/stt", {
       method: "POST",
@@ -1078,6 +1333,8 @@ export default function ChatInterface() {
     }
 
     audioPlayerRef.current.pause();
+    revokeSpeechAudioUrl();
+    speechAudioUrlRef.current = audioUrl;
     audioPlayerRef.current.src = audioUrl;
     audioPlayerRef.current.volume = voiceSettings.volume;
     audioPlayerRef.current.onplay = () => {
@@ -1096,7 +1353,7 @@ export default function ChatInterface() {
       setSpeechDuration(audioPlayerRef.current?.duration || 0);
     };
     audioPlayerRef.current.onended = () => {
-      URL.revokeObjectURL(audioUrl);
+      revokeSpeechAudioUrl(audioUrl);
       setIsSpeaking(false);
       setIsSpeechPaused(false);
       setSpeechProgress(0);
@@ -1315,10 +1572,21 @@ export default function ChatInterface() {
       });
     };
 
+    const transport = new SmallWebRTCTransport({
+      mediaManager: new WavMediaManager(200, 16000),
+    });
+    (
+      transport as typeof transport & {
+        pc?: RTCPeerConnection | null;
+        addInitialTransceivers: () => void;
+      }
+    ).addInitialTransceivers = function addInitialTransceivers() {
+      this.pc?.addTransceiver("audio", { direction: "sendrecv" });
+      this.pc?.addTransceiver("video", { direction: "inactive" });
+    };
+
     const client = new PipecatClient({
-      transport: new SmallWebRTCTransport({
-        mediaManager: new WavMediaManager(200, 16000),
-      }),
+      transport,
       enableMic: true,
       enableCam: false,
       callbacks: {
@@ -1365,22 +1633,22 @@ export default function ChatInterface() {
               ? "Heard you. Holding for a brief pause before answering..."
               : "Heard you. Waiting for transcript..."
           );
-          scheduleLiveVoiceTurnFlush(1250);
+          scheduleLiveVoiceTurnFlush(LIVE_VOICE_STOP_FLUSH_MS);
         },
         onUserTranscript: (data: PipecatTranscriptData) => {
-          if (!data.text) return;
-          setLiveTranscript(data.text);
-          if (!data.final) return;
-          pipecatPendingTranscriptRef.current = [
+          const transcript = data.text?.trim();
+          if (!transcript) return;
+
+          setLiveTranscript(transcript);
+          if (!isPipecatFinalTranscript(data)) return;
+
+          pipecatPendingTranscriptRef.current = appendPipecatTranscript(
             pipecatPendingTranscriptRef.current,
-            data.text,
-          ]
-            .filter(Boolean)
-            .join(" ")
-            .trim();
+            transcript
+          );
           setActivityStatus("Transcript captured. Pause briefly and UVB will answer.");
           if (!liveUserSpeakingRef.current) {
-            scheduleLiveVoiceTurnFlush(1250);
+            scheduleLiveVoiceTurnFlush(LIVE_VOICE_FINAL_FLUSH_MS);
           }
         },
         onBotStartedSpeaking: () => {
@@ -1392,11 +1660,12 @@ export default function ChatInterface() {
         onBotStoppedSpeaking: () => {
           assistantMessageId = null;
           assistantText = "";
-          pipecatPendingTranscriptRef.current = "";
           liveTurnStateRef.current = "idle";
           setLiveVoicePhase("idle");
           setActivityStatus("Pipecat live voice ready for the next turn.");
-          setLiveTranscript("");
+          if (!pipecatPendingTranscriptRef.current.trim()) {
+            setLiveTranscript("");
+          }
         },
         onBotLlmText: (data) => {
           if (!data.text) return;
@@ -1426,8 +1695,19 @@ export default function ChatInterface() {
           });
         },
         onLocalAudioLevel: (level) => {
+          const now = performance.now();
+          if (now - liveLastLevelUiAtRef.current < 80) return;
+          liveLastLevelUiAtRef.current = now;
+
           const normalized = Math.min(1, Math.max(0.03, level > 1 ? level / 100 : level * 8));
-          setVoiceLevels((levels) => [...levels.slice(1), normalized]);
+          setVoiceLevels((levels) =>
+            levels.map((_, index) => {
+              const position = levels.length <= 1 ? 0.5 : index / (levels.length - 1);
+              const centerLift = 0.35 + Math.sin(position * Math.PI) * 0.65;
+              const ripple = 0.78 + Math.sin(now / 95 + index * 0.72) * 0.22;
+              return Math.min(1, Math.max(0.03, normalized * centerLift * ripple));
+            })
+          );
         },
         onError: (message) => {
           setActivityStatus(`Pipecat error: ${JSON.stringify(message)}`);
@@ -1550,6 +1830,7 @@ export default function ChatInterface() {
       pipecatAudioRef.current.srcObject = null;
       pipecatAudioRef.current = null;
     }
+    clearSpeechAudioSource();
     clearPipecatFallbackTimer();
     pipecatPendingTranscriptRef.current = "";
     pipecatFallbackInFlightRef.current = false;
@@ -1586,10 +1867,62 @@ export default function ChatInterface() {
     }
   };
 
-  const attachFiles = (files: FileList | null) => {
+  const attachFiles = async (files: FileList | null) => {
     if (!files?.length) return;
 
-    const summaries = Array.from(files).map((file) => {
+    const selectedFiles = Array.from(files);
+    const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/"));
+    const otherFiles = selectedFiles.filter((file) => !file.type.startsWith("image/"));
+
+    if (imageFiles.length) {
+      const currentImageCount = pendingAttachments.filter(
+        (attachment) => attachment.kind === "image"
+      ).length;
+      const remainingSlots = Math.max(0, MAX_IMAGE_ATTACHMENTS - currentImageCount);
+      const acceptedImages = imageFiles.slice(0, remainingSlots);
+      const oversizedImages = acceptedImages.filter(
+        (file) => file.size > MAX_IMAGE_ATTACHMENT_BYTES
+      );
+      const readableImages = acceptedImages.filter(
+        (file) => file.size <= MAX_IMAGE_ATTACHMENT_BYTES
+      );
+
+      if (readableImages.length) {
+        try {
+          setActivityStatus("Loading image preview...");
+          const attachments = await Promise.all(
+            readableImages.map(async (file) => {
+              const normalizedImage = await fileToModelImageDataUrl(file);
+              return {
+                id: generateId(),
+                name: file.name,
+                mediaType: normalizedImage.mediaType,
+                dataUrl: normalizedImage.dataUrl,
+                size: normalizedImage.size,
+                kind: "image" as const,
+              };
+            })
+          );
+          setPendingAttachments((current) => [...current, ...attachments]);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Could not read image.";
+          setActivityStatus(`Image attach failed: ${message}`);
+          return;
+        }
+      }
+
+      if (imageFiles.length > acceptedImages.length) {
+        setActivityStatus(`Attached ${readableImages.length} image(s). UVB keeps up to ${MAX_IMAGE_ATTACHMENTS} at once.`);
+      } else if (oversizedImages.length) {
+        setActivityStatus("Some images were over 8 MB and were skipped.");
+      } else if (readableImages.length) {
+        setActivityStatus("Image attached. Send it, or add a note first.");
+      }
+    }
+
+    if (!otherFiles.length) return;
+
+    const summaries = otherFiles.map((file) => {
       const sizeKb = Math.max(1, Math.round(file.size / 1024));
       return `[Attached ${file.type || "file"}: ${file.name}, ${sizeKb} KB]`;
     });
@@ -1664,11 +1997,11 @@ export default function ChatInterface() {
   ) : null;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden">
       {/* Thread sidebar */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-w-0 flex-1 overflow-hidden">
         {/* Thread list */}
-        <div className="w-64 border-r border-uvb-border/40 flex flex-col flex-shrink-0">
+        <div className="relative w-64 border-r border-uvb-border/40 flex flex-col flex-shrink-0">
           <div className="p-3">
             <button
               onClick={createNewThread}
@@ -1732,7 +2065,7 @@ export default function ChatInterface() {
                         <span className="truncate">{thread.title}</span>
                       </div>
                       <span className="text-[10px] text-uvb-text-muted block mt-0.5">
-                        {new Date(thread.updatedAt).toLocaleDateString()}
+                        {timestampToDate(thread.updatedAt).toLocaleDateString()}
                       </span>
                     </button>
                     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
@@ -1772,11 +2105,35 @@ export default function ChatInterface() {
               </div>
             )}
           </div>
+          {activeThread && activeThread.messages.length > 0 && (
+            <div className="pointer-events-none fixed bottom-24 left-[14.25rem] z-30">
+              <div className="pointer-events-auto flex flex-col gap-1 rounded-lg border border-uvb-neon-green/20 bg-uvb-deep-teal/25 p-1 shadow-lg backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={scrollMessagesToTop}
+                  title="Jump to the top of this chat"
+                  aria-label="Jump to the top of this chat"
+                  className="rounded-md p-1.5 text-uvb-text-secondary transition-colors hover:bg-uvb-neon-green/10 hover:text-uvb-neon-green"
+                >
+                  <ArrowUpIcon className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={scrollMessagesToBottom}
+                  title="Jump to the latest message"
+                  aria-label="Jump to the latest message"
+                  className="rounded-md p-1.5 text-uvb-text-secondary transition-colors hover:bg-uvb-neon-green/10 hover:text-uvb-neon-green"
+                >
+                  <ArrowDownIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Chat area */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 border-b border-uvb-border/30 bg-uvb-dark-gray/40 text-[11px] text-uvb-text-muted">
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 overflow-hidden px-4 py-2 border-b border-uvb-border/30 bg-uvb-dark-gray/40 text-[11px] text-uvb-text-muted">
             {chatConfig ? (
               <>
                 <span
@@ -1796,9 +2153,9 @@ export default function ChatInterface() {
               <span>Checking local model bridge...</span>
             )}
           </div>
-          <div className="flex items-center justify-between gap-3 border-b border-uvb-border/20 bg-uvb-matte-black/30 px-4 py-2 text-[11px]">
-            <span className="text-uvb-text-secondary">{activityStatus}</span>
-            <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center justify-between gap-3 overflow-hidden border-b border-uvb-border/20 bg-uvb-matte-black/30 px-4 py-2 text-[11px]">
+            <span className="min-w-0 truncate text-uvb-text-secondary">{activityStatus}</span>
+            <div className="flex flex-shrink-0 items-center gap-2">
               <button
                 onClick={toggleLiveVoice}
                 title={
@@ -1860,7 +2217,9 @@ export default function ChatInterface() {
             </div>
           </div>
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div ref={messagesScrollerRef} className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
+            <div ref={messagesTopRef} aria-hidden="true" />
+            <div className="space-y-6">
             {!activeThread || activeThread.messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <motion.div
@@ -1906,107 +2265,130 @@ export default function ChatInterface() {
                 </div>
               </div>
             ) : (
-              <AnimatePresence mode="popLayout">
-                {activeThread.messages.map((msg) => (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className={`flex gap-4 ${
-                      msg.role === "user" ? "justify-end" : "justify-start"
+              <div className="space-y-6">
+                {activeThread.messages.map((msg, index) => {
+                  const role = safeMessageRole(msg.role);
+                  const content = safeDisplayText(msg.content);
+                  const messageId = safeDisplayText(msg.id) || `message-${index}`;
+                  const imageAttachments =
+                    msg.attachments?.filter((attachment) => attachment.kind === "image") ?? [];
+                  const hideDefaultImagePrompt =
+                    role === "user" &&
+                    imageAttachments.length > 0 &&
+                    content === DEFAULT_IMAGE_PROMPT;
+
+                  return (
+                  <div
+                    key={index}
+                    className={`flex w-full min-w-0 gap-4 ${
+                      role === "user" ? "justify-end" : "justify-start"
                     }`}
                   >
-                    {msg.role === "assistant" && (
-                      <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-uvb-deep-teal to-uvb-steel-blue flex items-center justify-center flex-shrink-0">
-                        <Bot className="w-5 h-5 text-uvb-neon-green" />
-                      </div>
-                    )}
                     <div
-                      className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                        msg.role === "user"
+                      className={`min-w-0 max-w-[min(70%,52rem)] overflow-hidden rounded-2xl px-4 py-3 ${
+                        role === "user"
                           ? "bg-uvb-deep-teal/40 border border-uvb-deep-teal/40 text-uvb-text-primary"
                           : "bg-uvb-dark-gray/60 border border-uvb-border/30 text-uvb-text-primary"
                       }`}
                     >
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                        {msg.content}
-                      </p>
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className="text-[10px] text-uvb-text-muted">
-                          {new Date(msg.timestamp).toLocaleTimeString()}
-                        </span>
-                        {msg.role === "assistant" && (
-                          <div className="flex gap-1">
+                      {content && !hideDefaultImagePrompt && (
+                        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
+                          {content}
+                        </p>
+                      )}
+                      {imageAttachments.length > 0 && (
+                        <div className={content && !hideDefaultImagePrompt ? "mt-3 flex flex-wrap gap-2" : "flex flex-wrap gap-2"}>
+                          {imageAttachments.map((attachment) => (
                             <button
-                              onClick={() => replayMessageSpeech(msg.content)}
+                              type="button"
+                              key={attachment.id}
+                              onClick={() => attachment.dataUrl && setExpandedImage(attachment)}
+                              disabled={!attachment.dataUrl}
+                              title={`Open ${attachment.name}`}
+                              className="group block overflow-hidden rounded-lg border border-uvb-border/40 bg-uvb-matte-black/60"
+                            >
+                              {attachment.dataUrl ? (
+                                <Image
+                                  src={attachment.dataUrl}
+                                  alt={attachment.name}
+                                  width={96}
+                                  height={96}
+                                  unoptimized
+                                  className="h-24 w-24 object-cover transition-transform group-hover:scale-105"
+                                />
+                              ) : (
+                                <div className="flex h-24 w-24 items-center justify-center px-2 text-center text-[10px] text-uvb-text-muted">
+                                  Image not stored
+                                </div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-2 flex min-w-0 items-center gap-2 overflow-hidden">
+                        <span className="text-[10px] text-uvb-text-muted">
+                          {timestampToDate(msg.timestamp).toLocaleTimeString()}
+                        </span>
+                        {role === "assistant" && (
+                          <div className="flex flex-shrink-0 gap-1">
+                            <button
+                              onClick={() => replayMessageSpeech(content)}
                               title="Play this response"
                               aria-label="Play this response"
-                              className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-neon-green transition-colors"
+                              className="rounded p-1 text-uvb-text-muted transition-colors hover:bg-uvb-light-gray/40 hover:text-uvb-neon-green"
                             >
-                              <PlayIcon className="w-3 h-3" />
+                              <PlayIcon className="h-3 w-3" />
                             </button>
                             <button
-                              onClick={() => copyText(msg.content)}
+                              onClick={() => copyText(content)}
                               title="Copy response"
                               aria-label="Copy response"
-                              className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                              className="rounded p-1 text-uvb-text-muted transition-colors hover:bg-uvb-light-gray/40 hover:text-uvb-text-secondary"
                             >
-                              <DocumentDuplicateIcon className="w-3 h-3" />
+                              <ClipboardDocumentIcon className="h-3 w-3" />
                             </button>
                             <button
-                              onClick={() => regenerateFromMessage(msg.id)}
+                              onClick={() => regenerateFromMessage(messageId)}
                               title="Regenerate from the previous prompt"
                               aria-label="Regenerate from the previous prompt"
-                              className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                              className="rounded p-1 text-uvb-text-muted transition-colors hover:bg-uvb-light-gray/40 hover:text-uvb-text-secondary"
                             >
-                              <ArrowPathIcon className="w-3 h-3" />
+                              <ArrowPathIcon className="h-3 w-3" />
                             </button>
                             <button
-                              onClick={() => branchFromMessage(msg.id)}
+                              onClick={() => branchFromMessage(messageId)}
                               title="Branch conversation from here"
                               aria-label="Branch conversation from here"
-                              className="p-0.5 rounded hover:bg-uvb-light-gray/40 text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
+                              className="rounded p-1 text-uvb-text-muted transition-colors hover:bg-uvb-light-gray/40 hover:text-uvb-text-secondary"
                             >
-                              <ArrowUturnLeftIcon className="w-3 h-3" />
+                              <ArrowUturnRightIcon className="h-3 w-3" />
                             </button>
                             <button
                               onClick={() => toggleBookmark(msg)}
                               title={msg.bookmarked ? "Remove bookmark" : "Bookmark response"}
                               aria-label={msg.bookmarked ? "Remove bookmark" : "Bookmark response"}
-                              className={`p-0.5 rounded hover:bg-uvb-light-gray/40 transition-colors ${
+                              className={`rounded p-1 transition-colors hover:bg-uvb-light-gray/40 ${
                                 msg.bookmarked
                                   ? "text-uvb-accent-yellow"
                                   : "text-uvb-text-muted hover:text-uvb-text-secondary"
                               }`}
                             >
-                              <BookmarkIcon className="w-3 h-3" />
+                              <BookmarkIcon className="h-3 w-3" />
                             </button>
                           </div>
                         )}
                       </div>
                     </div>
-                    {msg.role === "user" && (
-                      <div className="w-9 h-9 rounded-lg bg-uvb-royal-purple/40 border border-uvb-royal-purple/30 flex items-center justify-center flex-shrink-0">
-                        <User className="w-5 h-5 text-uvb-brushed-silver" />
-                      </div>
-                    )}
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+                  </div>
+                  );
+                })}
+              </div>
             )}
 
             {/* Typing indicator */}
             {isTyping && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex gap-4"
-              >
-                <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-uvb-deep-teal to-uvb-steel-blue flex items-center justify-center flex-shrink-0">
-                  <Bot className="w-5 h-5 text-uvb-neon-green" />
-                </div>
-                <div className="bg-uvb-dark-gray/60 border border-uvb-border/30 rounded-2xl px-4 py-3">
+              <div className="flex w-full min-w-0 gap-4">
+                <div className="min-w-0 rounded-2xl border border-uvb-border/30 bg-uvb-dark-gray/60 px-4 py-3">
                   <div className="flex gap-1">
                     {[0, 1, 2].map((i) => (
                       <motion.div
@@ -2022,16 +2404,17 @@ export default function ChatInterface() {
                     ))}
                   </div>
                 </div>
-              </motion.div>
+              </div>
             )}
             <div ref={messagesEndRef} />
+            </div>
           </div>
 
           {/* Input area */}
-          <div className="p-4 border-t border-uvb-border/40">
+          <div className="min-w-0 overflow-hidden border-t border-uvb-border/40 p-4">
             {speechControls}
             {(isRecording || isTranscribing || liveVoiceEnabled) && (
-              <div className="mb-3 flex items-center gap-3 p-3 rounded-lg bg-uvb-deep-teal/20 border border-uvb-neon-green/20">
+              <div className="mb-3 flex min-w-0 items-center gap-3 overflow-hidden rounded-lg bg-uvb-deep-teal/20 border border-uvb-neon-green/20 p-3">
                 <div
                   className={`w-3 h-3 rounded-full ${
                     liveVoiceConnected || isRecording ? "bg-red-500 status-pulse" : "bg-uvb-accent-yellow"
@@ -2172,6 +2555,50 @@ export default function ChatInterface() {
                 </button>
               </div>
               <div className="flex-1 relative">
+                {pendingAttachments.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    {pendingAttachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="group relative overflow-hidden rounded-lg border border-uvb-border/40 bg-uvb-matte-black/70"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setExpandedImage(attachment)}
+                          title={`Open ${attachment.name}`}
+                          className="block"
+                        >
+                          {attachment.dataUrl ? (
+                            <Image
+                              src={attachment.dataUrl}
+                              alt={attachment.name}
+                              width={64}
+                              height={64}
+                              unoptimized
+                              className="h-16 w-16 object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-16 w-16 items-center justify-center px-1 text-center text-[9px] text-uvb-text-muted">
+                              Image not stored
+                            </div>
+                          )}
+                        </button>
+                        <button
+                          onClick={() =>
+                            setPendingAttachments((current) =>
+                              current.filter((item) => item.id !== attachment.id)
+                            )
+                          }
+                          title={`Remove ${attachment.name}`}
+                          aria-label={`Remove ${attachment.name}`}
+                          className="absolute right-1 top-1 rounded-full bg-uvb-matte-black/80 p-0.5 text-uvb-text-muted opacity-0 transition-opacity hover:text-red-300 group-hover:opacity-100"
+                        >
+                          <XMarkIcon className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -2203,7 +2630,7 @@ export default function ChatInterface() {
                     multiple
                     className="hidden"
                     onChange={(event) => {
-                      attachFiles(event.target.files);
+                      void attachFiles(event.target.files);
                       event.target.value = "";
                     }}
                   />
@@ -2211,7 +2638,7 @@ export default function ChatInterface() {
               </div>
               <button
                 onClick={sendMessage}
-                disabled={!input.trim() && !isRecording}
+                disabled={!input.trim() && !pendingAttachments.length && !isRecording}
                 title={isTyping ? "KnightBot is responding" : "Send message"}
                 aria-label="Send message"
                 className="p-3 rounded-lg btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
@@ -2222,6 +2649,41 @@ export default function ChatInterface() {
           </div>
         </div>
       </div>
+      {expandedImage?.dataUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-uvb-matte-black/90 p-6 backdrop-blur"
+          role="dialog"
+          aria-modal="true"
+          aria-label={expandedImage.name}
+          onClick={() => setExpandedImage(null)}
+        >
+          <div
+            className="relative max-h-full max-w-full"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setExpandedImage(null)}
+              title="Close image preview"
+              aria-label="Close image preview"
+              className="absolute -right-3 -top-3 z-10 rounded-full border border-uvb-border/50 bg-uvb-dark-gray p-1.5 text-uvb-text-secondary shadow-lg hover:text-red-300"
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+            <Image
+              src={expandedImage.dataUrl}
+              alt={expandedImage.name}
+              width={1200}
+              height={900}
+              unoptimized
+              className="max-h-[85vh] w-auto max-w-[85vw] rounded-lg border border-uvb-border/40 object-contain shadow-2xl"
+            />
+            <div className="mt-2 truncate text-center text-xs text-uvb-text-muted">
+              {expandedImage.name}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

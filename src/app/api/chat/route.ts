@@ -7,9 +7,13 @@ const LLM_API_KEY = process.env.UVB_LLM_API_KEY ?? "uvb-local";
 
 type ChatRole = "system" | "user" | "assistant";
 
+type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } };
+
 interface ChatMessage {
   role: ChatRole;
-  content: string;
+  content: string | ChatContentPart[];
 }
 
 interface ChatRequestBody {
@@ -41,6 +45,17 @@ const DEFAULT_SYSTEM_PROMPT =
 
 function normalizeBaseUrl(baseUrl: string) {
   return baseUrl.trim().replace(/\/+$/, "");
+}
+
+function hasMessageContent(content: ChatMessage["content"]) {
+  if (typeof content === "string") return content.trim().length > 0;
+  if (!Array.isArray(content)) return false;
+
+  return content.some((part) => {
+    if (part.type === "text") return part.text.trim().length > 0;
+    if (part.type === "image_url") return part.image_url.url.trim().length > 0;
+    return false;
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -76,8 +91,7 @@ export async function POST(request: NextRequest) {
       .filter(
         (message) =>
           (message.role === "user" || message.role === "assistant") &&
-          typeof message.content === "string" &&
-          message.content.trim().length > 0
+          hasMessageContent(message.content)
       )
       .slice(-20),
   ];

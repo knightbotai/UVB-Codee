@@ -32,7 +32,19 @@ DEFAULT_VOICE_SETTINGS = {
     "sttUrl": os.getenv(
         "UVB_STT_URL", "http://127.0.0.1:8001/v1/audio/transcriptions"
     ),
-    "sttModel": os.getenv("UVB_STT_MODEL", "Systran/faster-whisper-large-v3"),
+    "sttModel": os.getenv("UVB_STT_MODEL", "Systran/faster-distil-whisper-large-v3"),
+    "sttLanguage": os.getenv("UVB_STT_LANGUAGE", "en"),
+    "sttPrompt": os.getenv(
+        "UVB_STT_PROMPT",
+        (
+            "Transcribe spoken English with natural punctuation, capitalization, "
+            "sentence boundaries, commas, periods, and question marks. Preserve "
+            "the speaker's words exactly."
+        ),
+    ),
+    "sttResponseFormat": os.getenv("UVB_STT_RESPONSE_FORMAT", "json"),
+    "sttTemperature": os.getenv("UVB_STT_TEMPERATURE", "0"),
+    "sttHotwords": os.getenv("UVB_STT_HOTWORDS", ""),
     "ttsUrl": os.getenv("UVB_TTS_URL", "http://127.0.0.1:8880/v1/audio/speech"),
     "ttsVoice": os.getenv("UVB_TTS_VOICE", "af_nova"),
     "liveSttProvider": "faster-whisper",
@@ -114,6 +126,16 @@ async def transcribe_audio(audio_bytes: bytes, voice_settings: dict[str, Any]) -
             content_type="audio/webm",
         )
         form.add_field("model", model)
+        for field_name, settings_key in (
+            ("language", "sttLanguage"),
+            ("prompt", "sttPrompt"),
+            ("response_format", "sttResponseFormat"),
+            ("temperature", "sttTemperature"),
+            ("hotwords", "sttHotwords"),
+        ):
+            value = str(voice_settings.get(settings_key) or DEFAULT_VOICE_SETTINGS[settings_key]).strip()
+            if value:
+                form.add_field(field_name, value)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(endpoint, data=form, timeout=120) as response:
