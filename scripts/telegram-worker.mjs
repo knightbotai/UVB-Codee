@@ -43,6 +43,10 @@ const telegramTtsChunkChars = Number.parseInt(
   10
 );
 const telegramTtsMaxParts = Number.parseInt(process.env.TELEGRAM_TTS_MAX_PARTS ?? "6", 10);
+const telegramUvbSttTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_STT_TIMEOUT_MS ?? "120000", 10);
+const telegramUvbChatTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_CHAT_TIMEOUT_MS ?? "240000", 10);
+const telegramUvbTtsTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_TTS_TIMEOUT_MS ?? "120000", 10);
+const telegramLongThinkMs = Number.parseInt(process.env.TELEGRAM_LONG_THINK_MS ?? "25000", 10);
 const apiBase = token ? `${telegramApiOrigin}/bot${token}` : "";
 const fileBase = token ? `${telegramFileOrigin}/file/bot${token}` : "";
 const histories = new Map();
@@ -56,6 +60,30 @@ function isAllowed(chatId) {
   return !allowedChatId || String(chatId) === String(allowedChatId);
 }
 
+function logStage(message) {
+  console.log(`[uvb-telegram] ${new Date().toISOString()} ${message}`);
+}
+
+function formatDuration(startedAt) {
+  return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 120000, label = "request") {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function getTelegramChatTitle(chat) {
   return (
     [chat?.first_name, chat?.last_name].filter(Boolean).join(" ").trim() ||
@@ -67,7 +95,7 @@ function getTelegramChatTitle(chat) {
 
 async function logTelegramChatTurn(message, userText, assistantText, messageType = "text") {
   try {
-    await fetch(`${uvbUrl}/api/telegram/log`, {
+    await fetchWithTimeout(`${uvbUrl}/api/telegram/log`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -79,7 +107,7 @@ async function logTelegramChatTurn(message, userText, assistantText, messageType
         messageType,
         timestamp: (message.date ? message.date * 1000 : Date.now()),
       }),
-    });
+    }, 30000, "Telegram chat log");
   } catch (error) {
     console.error(
       "[uvb-telegram] Could not write local Telegram chat log:",
@@ -108,7 +136,7 @@ function parseAgentCommand(text) {
 }
 
 async function queueAgentJobFromTelegram(message, command) {
-  const response = await fetch(`${uvbUrl}/api/agent/jobs`, {
+  const response = await fetchWithTimeout(`${uvbUrl}/api/agent/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -127,7 +155,7 @@ async function queueAgentJobFromTelegram(message, command) {
         preferFreeModels: true,
       },
     }),
-  });
+  }, 60000, "Agent job queue");
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.job) {
     throw new Error(data.error ?? `Agent job queue returned ${response.status}`);
@@ -262,9 +290,12 @@ async function getFile(fileId, attachment) {
 }
 
 async function downloadTelegramFile(fileId, attachment) {
+  const startedAt = Date.now();
+  logStage(`Downloading Telegram file ${fileId.slice(0, 12)}...`);
   const file = await getFile(fileId, attachment);
   if (file.file_path && path.isAbsolute(file.file_path) && existsSync(file.file_path)) {
     const bytes = await readFile(file.file_path);
+    logStage(`Loaded local Telegram file ${path.basename(file.file_path)} in ${formatDuration(startedAt)}.`);
     return {
       blob: new Blob([bytes], { type: attachment?.mime_type || "application/octet-stream" }),
       name: path.basename(file.file_path),
@@ -272,8 +303,9 @@ async function downloadTelegramFile(fileId, attachment) {
     };
   }
 
-  const response = await fetch(`${fileBase}/${file.file_path}`);
+  const response = await fetchWithTimeout(`${fileBase}/${file.file_path}`, {}, 120000, "Telegram file download");
   if (!response.ok) throw new Error(`Could not download Telegram file: ${response.status}`);
+  logStage(`Downloaded Telegram file ${path.basename(file.file_path ?? "telegram-file")} in ${formatDuration(startedAt)}.`);
   return {
     blob: await response.blob(),
     name: path.basename(file.file_path ?? "telegram-file"),
@@ -483,6 +515,7 @@ async function transcribeTelegramVoice(message) {
 
   await sendAction(message.chat.id, "typing");
   const file = await downloadTelegramFile(voice.file_id, voice);
+  logStage(`Transcribing Telegram voice message ${message.message_id ?? "?"} locally.`);
   return transcribeAudioBlob(file.blob, file.name || "telegram-voice.ogg");
 }
 
@@ -539,12 +572,19 @@ async function transcribeAudioBlob(blob, fileName) {
   const form = new FormData();
   form.append("file", blob, fileName || "telegram-audio.mp3");
 
-  const sttResponse = await fetch(`${uvbUrl}/api/stt`, { method: "POST", body: form });
+  const startedAt = Date.now();
+  const sttResponse = await fetchWithTimeout(
+    `${uvbUrl}/api/stt`,
+    { method: "POST", body: form },
+    telegramUvbSttTimeoutMs,
+    "UVB STT"
+  );
   const data = await sttResponse.json().catch(() => ({}));
   if (!sttResponse.ok || !data.text) {
     throw new Error(data.error ?? "Telegram media transcription failed.");
   }
 
+  logStage(`UVB STT completed for ${fileName || "telegram-audio.mp3"} in ${formatDuration(startedAt)}.`);
   return data.text;
 }
 
@@ -659,20 +699,27 @@ async function synthesizeSpeech(text) {
   const speechText = text.trim();
   if (!speechText) return null;
 
-  const response = await fetch(`${uvbUrl}/api/tts`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: speechText,
-      voice: telegramTtsVoice,
-    }),
-  });
+  const startedAt = Date.now();
+  const response = await fetchWithTimeout(
+    `${uvbUrl}/api/tts`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: speechText,
+        voice: telegramTtsVoice,
+      }),
+    },
+    telegramUvbTtsTimeoutMs,
+    "UVB TTS"
+  );
 
   if (!response.ok) {
     const rawText = await response.text();
     throw new Error(`UVB TTS returned ${response.status}: ${rawText || response.statusText}`);
   }
 
+  logStage(`UVB TTS synthesized ${speechText.length} chars in ${formatDuration(startedAt)}.`);
   return {
     blob: await response.blob(),
     contentType: response.headers.get("content-type") || "audio/wav",
@@ -684,6 +731,7 @@ async function sendSpeech(chatId, text) {
 
   const parts = splitTextForSpeech(text);
   for (const [index, part] of parts.entries()) {
+    logStage(`Sending TTS audio part ${index + 1}/${parts.length} to chat ${chatId}.`);
     await sendAction(chatId, "upload_voice");
     const audio = await synthesizeSpeech(part);
     if (!audio) continue;
@@ -702,6 +750,7 @@ async function sendSpeech(chatId, text) {
       form.append("caption", `Part ${index + 1} of ${parts.length}`);
     }
     await telegramForm("sendAudio", form);
+    logStage(`Sent TTS audio part ${index + 1}/${parts.length} to chat ${chatId}.`);
   }
 }
 
@@ -709,19 +758,52 @@ async function askKnightBot(chatId, content, logText) {
   const history = histories.get(chatId) ?? [];
   const userMessage = { role: "user", content };
   const messages = [...history, userMessage].slice(-20);
-  console.log(`[uvb-telegram] Routing chat ${chatId} to UVB: ${logText.slice(0, 120)}`);
+  const startedAt = Date.now();
+  logStage(`Routing chat ${chatId} to UVB chat: ${logText.slice(0, 120)}`);
 
-  const response = await fetch(`${uvbUrl}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages }),
-  });
+  const progressTimers = [];
+  const longThinkDelay = Number.isFinite(telegramLongThinkMs) && telegramLongThinkMs >= 5000
+    ? telegramLongThinkMs
+    : 25000;
+  progressTimers.push(
+    setTimeout(() => {
+      sendMessage(chatId, "Still thinking through the local model...").catch((error) => {
+        const messageText = error instanceof Error ? error.message : "unknown progress send error";
+        console.error(`[uvb-telegram] Could not send first progress ping: ${messageText}`);
+      });
+    }, longThinkDelay)
+  );
+  progressTimers.push(
+    setTimeout(() => {
+      sendMessage(chatId, "Sophia is still working locally. The model is taking a long turn, but the bridge has not dropped it.").catch((error) => {
+        const messageText = error instanceof Error ? error.message : "unknown progress send error";
+        console.error(`[uvb-telegram] Could not send second progress ping: ${messageText}`);
+      });
+    }, longThinkDelay * 2)
+  );
+
+  let response;
+  try {
+    response = await fetchWithTimeout(
+      `${uvbUrl}/api/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages }),
+      },
+      telegramUvbChatTimeoutMs,
+      "UVB chat"
+    );
+  } finally {
+    progressTimers.forEach((timer) => clearTimeout(timer));
+  }
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || !data.content) {
     throw new Error(data.error ?? "UVB chat returned no response.");
   }
 
+  logStage(`UVB chat answered for chat ${chatId} in ${formatDuration(startedAt)}.`);
   histories.set(
     chatId,
     [...history, { role: "user", content: logText }, { role: "assistant", content: data.content }].slice(-20)
@@ -751,6 +833,7 @@ async function handleMessage(message) {
     if (!text && (message.voice || message.audio)) {
       await sendMessage(chatId, "Voice received. Transcribing locally...");
       text = await transcribeTelegramVoice(message);
+      logStage(`Voice message ${message.message_id ?? "?"} transcribed to ${text.length} chars.`);
       logText = text;
       messageType = "voice";
     }
@@ -797,9 +880,12 @@ async function handleMessage(message) {
     await sendAction(chatId, "typing");
     await sendMessage(chatId, "Working on it through UVB...");
     const answer = await askKnightBot(chatId, content || text, logText);
+    logStage(`Preparing Telegram reply for chat ${chatId}; answer length ${answer.length} chars.`);
     await logTelegramChatTurn(message, logText, answer, messageType);
     if (telegramSendTextReplies) {
+      logStage(`Sending text reply to chat ${chatId}.`);
       await sendLongMessage(chatId, answer);
+      logStage(`Sent text reply to chat ${chatId}.`);
     }
     try {
       await sendSpeech(chatId, answer);
