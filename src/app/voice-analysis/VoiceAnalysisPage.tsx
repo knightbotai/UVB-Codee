@@ -13,8 +13,9 @@ import {
   StopIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
-import { Activity, Brain, FileAudio, Gauge, SlidersHorizontal, Sparkles, Waves } from "lucide-react";
+import { Activity, Brain, FileAudio, Gauge, Rocket, SlidersHorizontal, Sparkles, Waves } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
+import { VOICE_MODEL_CATALOG, type VoiceModelKind } from "@/lib/voiceModelCatalog";
 import { loadVoiceSettings, type VoiceSettings } from "@/lib/voiceSettings";
 
 interface AudioAnalysis {
@@ -49,6 +50,7 @@ interface VoiceCloneProfile {
 }
 
 const VOICE_CLONE_STORAGE_KEY = "uvb:voice-clone-profiles";
+const MAX_REFERENCE_SAMPLE_BYTES = 8 * 1024 * 1024;
 const CLONE_PROVIDERS: Array<{ id: CloneProvider; label: string; desc: string }> = [
   { id: "kokoro", label: "Kokoro Fast", desc: "Fast local voice endpoint / current UVB default." },
   { id: "chatterbox", label: "Chatterbox Turbo", desc: "Expressive cloning target for conversational voice." },
@@ -208,6 +210,7 @@ export default function VoiceAnalysisPage() {
   const [cloneStatus, setCloneStatus] = useState("Voice clone profiles are stored locally.");
   const [cloneTestAudioUrl, setCloneTestAudioUrl] = useState("");
   const [isTestingClone, setIsTestingClone] = useState(false);
+  const [voiceCatalogFilter, setVoiceCatalogFilter] = useState<VoiceModelKind | "all">("all");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -304,6 +307,12 @@ export default function VoiceAnalysisPage() {
   const attachCurrentAudioToClone = async () => {
     if (!audioBlob) {
       setCloneStatus("Record or upload a reference sample first.");
+      return;
+    }
+    if (audioBlob.size > MAX_REFERENCE_SAMPLE_BYTES) {
+      setCloneStatus(
+        `Reference sample is ${formatBytes(audioBlob.size)}. Use a shorter clip under ${formatBytes(MAX_REFERENCE_SAMPLE_BYTES)} for local profile storage.`
+      );
       return;
     }
     try {
@@ -404,6 +413,9 @@ export default function VoiceAnalysisPage() {
         { label: "Zero Cross", value: analysis.zeroCrossingRate.toFixed(4), unit: "/sample" },
       ]
     : [];
+  const voiceCatalogItems = VOICE_MODEL_CATALOG.filter(
+    (item) => voiceCatalogFilter === "all" || item.kind === voiceCatalogFilter
+  );
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-6">
@@ -744,6 +756,93 @@ export default function VoiceAnalysisPage() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="uvb-card space-y-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="mb-2 flex items-center gap-2">
+              <Rocket className="h-5 w-5 text-uvb-neon-green" />
+              <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                State-of-the-Art Voice Stack
+              </h3>
+            </div>
+            <p className="max-w-3xl text-xs leading-relaxed text-uvb-text-secondary">
+              Research-backed provider map for UVB voice, cloning, long-form podcasting, and local model assets found on Z drive.
+            </p>
+          </div>
+          <div className="flex rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-1">
+            {(["all", "stt", "tts", "framework"] as Array<VoiceModelKind | "all">).map((filter) => (
+              <button
+                key={filter}
+                onClick={() => setVoiceCatalogFilter(filter)}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors ${
+                  voiceCatalogFilter === filter
+                    ? "bg-uvb-neon-green/15 text-uvb-neon-green"
+                    : "text-uvb-text-muted hover:text-uvb-text-secondary"
+                }`}
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          {voiceCatalogItems.map((item) => (
+            <div key={item.id} className="rounded-lg border border-uvb-border/25 bg-uvb-dark-gray/40 p-4">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h4 className="text-sm font-semibold text-uvb-text-primary">{item.name}</h4>
+                  <p className="mt-1 text-xs text-uvb-text-muted">{item.role}</p>
+                </div>
+                <div className="flex gap-1.5">
+                  <span className="rounded-full border border-uvb-border/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-uvb-text-muted">
+                    {item.kind}
+                  </span>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${
+                      item.status === "wired"
+                        ? "border-uvb-neon-green/30 text-uvb-neon-green"
+                        : item.status === "candidate"
+                          ? "border-uvb-steel-blue/35 text-uvb-steel-blue"
+                          : "border-uvb-border/30 text-uvb-text-muted"
+                    }`}
+                  >
+                    {item.status}
+                  </span>
+                </div>
+              </div>
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {item.strengths.map((strength) => (
+                  <span
+                    key={strength}
+                    className="rounded-md border border-uvb-border/20 bg-uvb-deep-teal/15 px-2 py-1 text-[10px] text-uvb-text-secondary"
+                  >
+                    {strength}
+                  </span>
+                ))}
+              </div>
+              <div className="space-y-1.5 text-xs text-uvb-text-muted">
+                <p>
+                  <span className="text-uvb-text-secondary">Footprint:</span> {item.footprint}
+                </p>
+                <p>
+                  <span className="text-uvb-text-secondary">License:</span> {item.license}
+                </p>
+                <p>
+                  <span className="text-uvb-text-secondary">Endpoint:</span> {item.endpointHint}
+                </p>
+                {item.localPaths?.length ? (
+                  <p className="break-all">
+                    <span className="text-uvb-text-secondary">Local:</span> {item.localPaths.join(" | ")}
+                  </p>
+                ) : null}
+                <p className="pt-1 leading-relaxed text-uvb-text-secondary">{item.notes}</p>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

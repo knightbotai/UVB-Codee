@@ -15,6 +15,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { Radio, Mic2, Headphones, Users } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
+import { VOICE_MODEL_CATALOG } from "@/lib/voiceModelCatalog";
 
 interface CloneProfileSummary {
   id: string;
@@ -49,7 +50,19 @@ export default function PodcastStudioPage() {
   const [masterVolume, setMasterVolume] = useState(80);
   const [noiseGate, setNoiseGate] = useState(-30);
   const [outputFormat, setOutputFormat] = useState("WAV 48kHz / 24-bit");
+  const [synthesisEngine, setSynthesisEngine] = useState("vibevoice-tts-1.5b");
+  const [renderMode, setRenderMode] = useState("Long-form multi-speaker");
   const [cloneProfiles, setCloneProfiles] = useState<CloneProfileSummary[]>(loadCloneProfiles);
+  const podcastVoiceEngines = VOICE_MODEL_CATALOG.filter(
+    (item) =>
+      item.kind === "tts" &&
+      ["wired", "candidate"].includes(item.status) &&
+      (item.id.includes("vibevoice") ||
+        item.id.includes("chatterbox") ||
+        item.id.includes("kokoro") ||
+        item.id.includes("cosyvoice") ||
+        item.id.includes("spark"))
+  );
 
   useEffect(() => {
     if (!isRecording || isPaused) return;
@@ -292,7 +305,7 @@ export default function PodcastStudioPage() {
         <h4 className="text-sm font-semibold mb-4 text-uvb-text-primary font-[family-name:var(--font-display)]">
           Mix Controls
         </h4>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-6">
           <div>
             <label className="text-xs text-uvb-text-muted block mb-2">
               Master Volume
@@ -346,6 +359,77 @@ export default function PodcastStudioPage() {
               <span>0dB</span>
             </div>
           </div>
+          <div>
+            <label className="text-xs text-uvb-text-muted block mb-2">
+              Synthesis Engine
+            </label>
+            <select
+              className="input-field text-sm"
+              value={synthesisEngine}
+              onChange={(event) => setSynthesisEngine(event.target.value)}
+            >
+              {podcastVoiceEngines.map((engine) => (
+                <option key={engine.id} value={engine.id}>
+                  {engine.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-uvb-text-muted block mb-2">
+              Render Mode
+            </label>
+            <select
+              className="input-field text-sm"
+              value={renderMode}
+              onChange={(event) => setRenderMode(event.target.value)}
+            >
+              <option>Long-form multi-speaker</option>
+              <option>Realtime streaming</option>
+              <option>Agent voice reply</option>
+              <option>Clone quality benchmark</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="uvb-card">
+        <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h4 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+              Podcast Voice Pipeline
+            </h4>
+            <p className="mt-1 text-xs text-uvb-text-muted">
+              VibeVoice is the long-form podcast lane. Chatterbox Turbo is the low-latency clone lane. Kokoro remains the fast fallback.
+            </p>
+          </div>
+          <span className="rounded-full border border-uvb-steel-blue/30 px-3 py-1 text-[10px] uppercase tracking-wider text-uvb-steel-blue">
+            {renderMode}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          {podcastVoiceEngines.slice(0, 6).map((engine) => (
+            <button
+              key={engine.id}
+              onClick={() => setSynthesisEngine(engine.id)}
+              className={`rounded-lg border p-3 text-left transition-colors ${
+                synthesisEngine === engine.id
+                  ? "border-uvb-neon-green/35 bg-uvb-deep-teal/30"
+                  : "border-uvb-border/25 bg-uvb-dark-gray/40 hover:border-uvb-steel-blue/35"
+              }`}
+            >
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-uvb-text-primary">{engine.name}</span>
+                <span className="rounded-full border border-uvb-border/30 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-uvb-text-muted">
+                  {engine.status}
+                </span>
+              </div>
+              <p className="text-xs leading-relaxed text-uvb-text-muted">{engine.notes}</p>
+              {engine.localPaths?.length ? (
+                <p className="mt-2 truncate text-[10px] text-uvb-text-muted">{engine.localPaths[0]}</p>
+              ) : null}
+            </button>
+          ))}
         </div>
       </div>
 
