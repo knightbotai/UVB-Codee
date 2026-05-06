@@ -42,6 +42,23 @@ import {
   saveUiSettings,
   type UiSettings,
 } from "@/lib/uiSettings";
+import {
+  AGENT_JOB_KIND_LABELS,
+  type AgentJob,
+  type AgentJobKind,
+} from "@/lib/agentJobs";
+import type {
+  AgentSkillCandidate,
+  AgentSkillRegistry,
+  AgentSkillTrustTier,
+} from "@/lib/agentSkills";
+import {
+  DEFAULT_REMOTE_DOMAINS,
+  type PublicUserProfile,
+  type UserAuthProvider,
+  type UserProfileAccessMode,
+  type UserProfileRole,
+} from "@/lib/userProfiles";
 
 const MODEL_PRESETS = [
   {
@@ -145,6 +162,41 @@ export default function SettingsPage() {
     loadAgentToolSettings()
   );
   const [agentToolStatus, setAgentToolStatus] = useState("");
+  const [agentJobs, setAgentJobs] = useState<AgentJob[]>([]);
+  const [agentJobStatus, setAgentJobStatus] = useState("Loading agent job queue...");
+  const [agentJobKind, setAgentJobKind] = useState<AgentJobKind>("deep-research");
+  const [agentJobTitle, setAgentJobTitle] = useState("");
+  const [agentJobPrompt, setAgentJobPrompt] = useState("");
+  const [agentSkillRegistries, setAgentSkillRegistries] = useState<AgentSkillRegistry[]>([]);
+  const [agentSkills, setAgentSkills] = useState<AgentSkillCandidate[]>([]);
+  const [agentSkillStatus, setAgentSkillStatus] = useState("Loading agent skill registry...");
+  const [skillName, setSkillName] = useState("");
+  const [skillSourceUrl, setSkillSourceUrl] = useState("");
+  const [skillRegistry, setSkillRegistry] = useState("manual");
+  const [skillTrustTier, setSkillTrustTier] = useState<AgentSkillTrustTier>("community");
+  const [skillDescription, setSkillDescription] = useState("");
+  const [skillMd, setSkillMd] = useState("");
+  const [userProfiles, setUserProfiles] = useState<PublicUserProfile[]>([]);
+  const [userProfileStatus, setUserProfileStatus] = useState("Loading user profiles...");
+  const [profileDraftId, setProfileDraftId] = useState("");
+  const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileUsername, setProfileUsername] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profileRole, setProfileRole] = useState<UserProfileRole>("collaborator");
+  const [profileTelegramChatId, setProfileTelegramChatId] = useState("");
+  const [profileRemoteDomains, setProfileRemoteDomains] = useState(DEFAULT_REMOTE_DOMAINS.join(", "));
+  const [profileAccessModes, setProfileAccessModes] = useState<UserProfileAccessMode[]>([
+    "local-browser",
+    "telegram",
+  ]);
+  const [profileAuthProviders, setProfileAuthProviders] = useState<UserAuthProvider[]>(["local-password"]);
+  const [profileGoogleSubject, setProfileGoogleSubject] = useState("");
+  const [profilePassword, setProfilePassword] = useState("");
+  const [profileNotes, setProfileNotes] = useState("");
+  const [authReadiness, setAuthReadiness] = useState<{
+    publicUrl?: string;
+    providers?: Array<{ id: string; name: string; configured: boolean; notes: string; callbackUrl?: string; rpId?: string; origin?: string }>;
+  } | null>(null);
   const [uiSettings, setUiSettings] = useState<UiSettings>(() => loadUiSettings());
   const [uiStatus, setUiStatus] = useState("");
   const [voiceStack, setVoiceStack] = useState<VoiceStackResponse | null>(null);
@@ -175,6 +227,79 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const loadAgentJobs = async () => {
+    try {
+      const response = await fetch("/api/agent/jobs", { cache: "no-store" });
+      const data = (await response.json()) as { jobs?: AgentJob[]; error?: string };
+      if (!response.ok) throw new Error(data.error || `Agent jobs failed with ${response.status}.`);
+      const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+      setAgentJobs(jobs);
+      setAgentJobStatus(jobs.length ? `${jobs.length} local agent job(s) tracked.` : "No local agent jobs yet.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load agent jobs.";
+      setAgentJobStatus(message);
+    }
+  };
+
+  useEffect(() => {
+    void loadAgentJobs();
+  }, []);
+
+  const loadAgentSkills = async () => {
+    try {
+      const response = await fetch("/api/agent/skills", { cache: "no-store" });
+      const data = (await response.json()) as {
+        registries?: AgentSkillRegistry[];
+        skills?: AgentSkillCandidate[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || `Agent skills failed with ${response.status}.`);
+      setAgentSkillRegistries(Array.isArray(data.registries) ? data.registries : []);
+      const skills = Array.isArray(data.skills) ? data.skills : [];
+      setAgentSkills(skills);
+      setAgentSkillStatus(skills.length ? `${skills.length} skill candidate(s) staged.` : "No skill candidates staged yet.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load agent skills.";
+      setAgentSkillStatus(message);
+    }
+  };
+
+  useEffect(() => {
+    void loadAgentSkills();
+  }, []);
+
+  const loadUserProfiles = async () => {
+    try {
+      const response = await fetch("/api/profiles", { cache: "no-store" });
+      const data = (await response.json()) as { profiles?: PublicUserProfile[]; error?: string };
+      if (!response.ok) throw new Error(data.error || `Profiles failed with ${response.status}.`);
+      const profiles = Array.isArray(data.profiles) ? data.profiles : [];
+      setUserProfiles(profiles);
+      setUserProfileStatus(profiles.length ? `${profiles.length} user profile(s) configured.` : "No separate user profiles yet.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load user profiles.";
+      setUserProfileStatus(message);
+    }
+  };
+
+  useEffect(() => {
+    void loadUserProfiles();
+  }, []);
+
+  const loadAuthReadiness = async () => {
+    try {
+      const response = await fetch("/api/auth/readiness", { cache: "no-store" });
+      const data = await response.json();
+      if (response.ok) setAuthReadiness(data);
+    } catch {
+      setAuthReadiness(null);
+    }
+  };
+
+  useEffect(() => {
+    void loadAuthReadiness();
   }, []);
 
   const tabs = [
@@ -220,6 +345,227 @@ export default function SettingsPage() {
   const saveCurrentAgentToolSettings = () => {
     saveAgentToolSettings(agentToolSettings);
     setAgentToolStatus("Saved Sophia agent tool permissions locally.");
+  };
+
+  const createAgentJob = async () => {
+    const prompt = agentJobPrompt.trim();
+    if (!prompt) {
+      setAgentJobStatus("Describe the job Sophia should prepare first.");
+      return;
+    }
+    setAgentJobStatus("Creating supervised agent job...");
+    try {
+      const response = await fetch("/api/agent/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          kind: agentJobKind,
+          title: agentJobTitle,
+          prompt,
+          requestedBy: "local",
+          settings: agentToolSettings,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { job?: AgentJob; error?: string };
+      if (!response.ok || !data.job) {
+        throw new Error(data.error || `Could not create job (${response.status}).`);
+      }
+      setAgentJobs((current) => [data.job as AgentJob, ...current.filter((job) => job.id !== data.job?.id)]);
+      setAgentJobPrompt("");
+      setAgentJobTitle("");
+      setAgentJobStatus(`${AGENT_JOB_KIND_LABELS[data.job.kind]} job queued.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not create agent job.";
+      setAgentJobStatus(message);
+    }
+  };
+
+  const updateAgentJobAction = async (id: string, action: "approve" | "cancel" | "delete") => {
+    setAgentJobStatus(
+      `${action === "approve" ? "Approving" : action === "delete" ? "Deleting" : "Cancelling"} agent job...`
+    );
+    try {
+      const response = await fetch("/api/agent/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, id }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { job?: AgentJob; jobs?: AgentJob[]; error?: string };
+      if (!response.ok || (!data.job && !data.jobs)) {
+        throw new Error(data.error || `Could not update job (${response.status}).`);
+      }
+      if (data.jobs) {
+        setAgentJobs(data.jobs);
+        setAgentJobStatus("Job deleted.");
+      } else {
+        setAgentJobs((current) => current.map((job) => (job.id === data.job?.id ? data.job : job)));
+        setAgentJobStatus(`Job ${action === "approve" ? "approved" : "cancelled"}.`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update agent job.";
+      setAgentJobStatus(message);
+    }
+  };
+
+  const importAgentSkill = async () => {
+    if (!skillName.trim() || !skillSourceUrl.trim()) {
+      setAgentSkillStatus("Skill name and source URL are required.");
+      return;
+    }
+    setAgentSkillStatus("Staging skill candidate with security scan...");
+    try {
+      const response = await fetch("/api/agent/skills", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "import",
+          name: skillName,
+          sourceUrl: skillSourceUrl,
+          registry: skillRegistry,
+          trustTier: skillTrustTier,
+          description: skillDescription,
+          skillMd,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { skill?: AgentSkillCandidate; error?: string };
+      if (!response.ok || !data.skill) {
+        throw new Error(data.error || `Could not import skill (${response.status}).`);
+      }
+      setAgentSkills((current) => [data.skill as AgentSkillCandidate, ...current]);
+      setSkillName("");
+      setSkillSourceUrl("");
+      setSkillDescription("");
+      setSkillMd("");
+      setAgentSkillStatus(`Staged ${data.skill.name} for review.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not import skill.";
+      setAgentSkillStatus(message);
+    }
+  };
+
+  const updateAgentSkillStatus = async (id: string, action: "approve" | "block") => {
+    setAgentSkillStatus(`${action === "approve" ? "Approving" : "Blocking"} skill candidate...`);
+    try {
+      const response = await fetch("/api/agent/skills", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, id }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { skill?: AgentSkillCandidate; error?: string };
+      if (!response.ok || !data.skill) {
+        throw new Error(data.error || `Could not update skill (${response.status}).`);
+      }
+      setAgentSkills((current) => current.map((skill) => (skill.id === data.skill?.id ? data.skill : skill)));
+      setAgentSkillStatus(`Skill ${action === "approve" ? "approved" : "blocked"}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update skill.";
+      setAgentSkillStatus(message);
+    }
+  };
+
+  const clearUserProfileDraft = () => {
+    setProfileDraftId("");
+    setProfileDisplayName("");
+    setProfileUsername("");
+    setProfileEmail("");
+    setProfileRole("collaborator");
+    setProfileTelegramChatId("");
+    setProfileRemoteDomains(DEFAULT_REMOTE_DOMAINS.join(", "));
+    setProfileAccessModes(["local-browser", "telegram"]);
+    setProfileAuthProviders(["local-password"]);
+    setProfileGoogleSubject("");
+    setProfilePassword("");
+    setProfileNotes("");
+  };
+
+  const loadUserProfileDraft = (profile: PublicUserProfile) => {
+    setProfileDraftId(profile.id);
+    setProfileDisplayName(profile.displayName);
+    setProfileUsername(profile.username);
+    setProfileEmail(profile.email);
+    setProfileRole(profile.role);
+    setProfileTelegramChatId(profile.telegramChatId);
+    setProfileRemoteDomains(profile.remoteDomains.join(", "));
+    setProfileAccessModes(profile.accessModes);
+    setProfileAuthProviders(profile.authProviders);
+    setProfileGoogleSubject(profile.googleSubject);
+    setProfilePassword("");
+    setProfileNotes(profile.notes);
+    setUserProfileStatus(`Loaded ${profile.displayName}.`);
+  };
+
+  const toggleProfileAccessMode = (mode: UserProfileAccessMode) => {
+    setProfileAccessModes((current) =>
+      current.includes(mode) ? current.filter((item) => item !== mode) : [...current, mode]
+    );
+  };
+
+  const toggleProfileAuthProvider = (provider: UserAuthProvider) => {
+    setProfileAuthProviders((current) =>
+      current.includes(provider) ? current.filter((item) => item !== provider) : [...current, provider]
+    );
+  };
+
+  const saveUserProfileDraft = async () => {
+    setUserProfileStatus("Saving user profile...");
+    try {
+      const response = await fetch("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "upsert",
+          id: profileDraftId,
+          displayName: profileDisplayName,
+          username: profileUsername,
+          email: profileEmail,
+          role: profileRole,
+          telegramChatId: profileTelegramChatId,
+          remoteDomains: profileRemoteDomains,
+          accessModes: profileAccessModes,
+          authProviders: profileAuthProviders,
+          googleSubject: profileGoogleSubject,
+          password: profilePassword,
+          notes: profileNotes,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        profiles?: PublicUserProfile[];
+        profile?: PublicUserProfile;
+        error?: string;
+      };
+      if (!response.ok || !data.profile) {
+        throw new Error(data.error || `Could not save profile (${response.status}).`);
+      }
+      setUserProfiles(Array.isArray(data.profiles) ? data.profiles : [data.profile]);
+      setUserProfileStatus(`Saved profile for ${data.profile.displayName}.`);
+      clearUserProfileDraft();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save user profile.";
+      setUserProfileStatus(message);
+    }
+  };
+
+  const deleteUserProfile = async (id: string) => {
+    setUserProfileStatus("Deleting user profile...");
+    try {
+      const response = await fetch("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        profiles?: PublicUserProfile[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || `Could not delete profile (${response.status}).`);
+      setUserProfiles(Array.isArray(data.profiles) ? data.profiles : []);
+      if (profileDraftId === id) clearUserProfileDraft();
+      setUserProfileStatus("Deleted user profile.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not delete user profile.";
+      setUserProfileStatus(message);
+    }
   };
 
   const saveCurrentIdentitySettings = () => {
@@ -613,6 +959,236 @@ export default function SettingsPage() {
                     </button>
                     {profileStatus && (
                       <span className="text-xs text-uvb-text-muted">{profileStatus}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="uvb-card">
+                  <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                        Account Profiles
+                      </h3>
+                      <p className="mt-1 text-xs text-uvb-text-muted">
+                        Local-first user identities for future Cloudflare remote access, Telegram linking, and separate Sophia sessions.
+                      </p>
+                    </div>
+                    <button onClick={loadUserProfiles} className="btn-ghost text-sm">
+                      Refresh Profiles
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Display Name</label>
+                      <input
+                        value={profileDisplayName}
+                        onChange={(event) => setProfileDisplayName(event.target.value)}
+                        className="input-field"
+                        placeholder="Jusstin"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Username</label>
+                      <input
+                        value={profileUsername}
+                        onChange={(event) => setProfileUsername(event.target.value)}
+                        className="input-field"
+                        placeholder="jusstin"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Email</label>
+                      <input
+                        type="email"
+                        value={profileEmail}
+                        onChange={(event) => setProfileEmail(event.target.value)}
+                        className="input-field"
+                        placeholder="name@daplab.net"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Role</label>
+                      <select
+                        value={profileRole}
+                        onChange={(event) => setProfileRole(event.target.value as UserProfileRole)}
+                        className="input-field"
+                      >
+                        <option value="owner">Owner</option>
+                        <option value="collaborator">Collaborator</option>
+                        <option value="viewer">Viewer</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Telegram Chat ID</label>
+                      <input
+                        value={profileTelegramChatId}
+                        onChange={(event) => setProfileTelegramChatId(event.target.value)}
+                        className="input-field"
+                        placeholder="Optional Telegram user/chat id"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Password</label>
+                      <input
+                        type="password"
+                        value={profilePassword}
+                        onChange={(event) => setProfilePassword(event.target.value)}
+                        className="input-field"
+                        placeholder={profileDraftId ? "Leave blank to keep current password" : "Stored as PBKDF2 hash"}
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <label className="mb-1.5 block text-xs text-uvb-text-muted">Remote Domains</label>
+                    <input
+                      value={profileRemoteDomains}
+                      onChange={(event) => setProfileRemoteDomains(event.target.value)}
+                      className="input-field"
+                      placeholder="daplab.net, tacimpulse.net"
+                    />
+                  </div>
+                  <div className="mt-3 rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-3">
+                    <div className="mb-3 flex flex-col gap-1 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-uvb-text-primary">Authentication Providers</p>
+                        <p className="text-xs text-uvb-text-muted">
+                          Google and passkeys become active after the callback domain and WebAuthn origin are configured.
+                        </p>
+                      </div>
+                      <button onClick={loadAuthReadiness} className="btn-ghost text-xs">
+                        Check Auth
+                      </button>
+                    </div>
+                    <div className="mb-3 grid grid-cols-1 gap-2 xl:grid-cols-3">
+                      {(authReadiness?.providers ?? []).map((provider) => (
+                        <div key={provider.id} className="rounded-md border border-uvb-border/20 bg-black/10 p-2">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-uvb-text-primary">{provider.name}</span>
+                            <span
+                              className={`rounded-full border px-1.5 py-0.5 text-[9px] uppercase tracking-wider ${
+                                provider.configured
+                                  ? "border-uvb-neon-green/30 text-uvb-neon-green"
+                                  : "border-uvb-accent-yellow/30 text-uvb-accent-yellow"
+                              }`}
+                            >
+                              {provider.configured ? "ready" : "setup"}
+                            </span>
+                          </div>
+                          <p className="text-[10px] leading-relaxed text-uvb-text-muted">{provider.notes}</p>
+                          {provider.callbackUrl && (
+                            <p className="mt-1 break-all text-[10px] text-uvb-text-muted">{provider.callbackUrl}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        ["local-password", "Password"],
+                        ["google-oidc", "Google"],
+                        ["passkey", "Passkey"],
+                      ].map(([provider, label]) => (
+                        <button
+                          key={provider}
+                          onClick={() => toggleProfileAuthProvider(provider as UserAuthProvider)}
+                          className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                            profileAuthProviders.includes(provider as UserAuthProvider)
+                              ? "border-uvb-neon-green/30 bg-uvb-deep-teal/25 text-uvb-neon-green"
+                              : "border-uvb-border/30 text-uvb-text-muted hover:text-uvb-text-secondary"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      value={profileGoogleSubject}
+                      onChange={(event) => setProfileGoogleSubject(event.target.value)}
+                      className="input-field mt-3"
+                      placeholder="Optional Google subject id after first OAuth link"
+                    />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {[
+                      ["local-browser", "Local Browser"],
+                      ["telegram", "Telegram"],
+                      ["remote-browser", "Remote Browser"],
+                    ].map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        onClick={() => toggleProfileAccessMode(mode as UserProfileAccessMode)}
+                        className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                          profileAccessModes.includes(mode as UserProfileAccessMode)
+                            ? "border-uvb-neon-green/30 bg-uvb-deep-teal/25 text-uvb-neon-green"
+                            : "border-uvb-border/30 text-uvb-text-muted hover:text-uvb-text-secondary"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={profileNotes}
+                    onChange={(event) => setProfileNotes(event.target.value)}
+                    className="input-field mt-3 min-h-20 resize-y"
+                    placeholder="Access notes, Cloudflare tunnel route, allowed workflows..."
+                  />
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <button onClick={saveUserProfileDraft} className="btn-primary">
+                      {profileDraftId ? "Update Account Profile" : "Create Account Profile"}
+                    </button>
+                    {profileDraftId && (
+                      <button onClick={clearUserProfileDraft} className="btn-ghost">
+                        Cancel Edit
+                      </button>
+                    )}
+                    <span className="text-xs text-uvb-text-muted">{userProfileStatus}</span>
+                  </div>
+
+                  <div className="mt-5 space-y-3">
+                    {userProfiles.map((profile) => (
+                      <div key={profile.id} className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-3">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-sm font-semibold text-uvb-text-primary">{profile.displayName}</h4>
+                              <span className="rounded-full border border-uvb-steel-blue/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-uvb-steel-blue">
+                                {profile.role}
+                              </span>
+                              <span className="rounded-full border border-uvb-border/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-uvb-text-muted">
+                                {profile.passwordConfigured ? "password set" : "no password"}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-uvb-text-muted">
+                              @{profile.username} · {profile.email}
+                            </p>
+                            <p className="mt-1 text-xs text-uvb-text-muted">
+                              {profile.accessModes.join(", ")} · {profile.remoteDomains.join(", ")}
+                            </p>
+                            <p className="mt-1 text-xs text-uvb-text-muted">
+                              Auth: {profile.authProviders.join(", ")}
+                              {profile.googleSubject ? ` · Google linked` : ""}
+                              {profile.passkeyCredentialCount ? ` · ${profile.passkeyCredentialCount} passkey(s)` : ""}
+                            </p>
+                            {profile.telegramChatId && (
+                              <p className="mt-1 text-xs text-uvb-text-muted">Telegram: {profile.telegramChatId}</p>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 gap-2">
+                            <button onClick={() => loadUserProfileDraft(profile)} className="btn-ghost text-xs">
+                              Edit
+                            </button>
+                            <button onClick={() => deleteUserProfile(profile.id)} className="btn-ghost text-xs text-red-300">
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {!userProfiles.length && (
+                      <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4 text-sm text-uvb-text-muted">
+                        No extra account profiles yet. Create one for Jusstin, yourself, or any future remote user.
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1147,6 +1723,263 @@ export default function SettingsPage() {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+
+                <div className="uvb-card">
+                  <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                        Supervised Agent Job Queue
+                      </h3>
+                      <p className="mt-1 text-xs text-uvb-text-muted">
+                        Create approved work packets for Sophia research, browser, coding, and computer-use runners.
+                      </p>
+                    </div>
+                    <button onClick={loadAgentJobs} className="btn-ghost text-sm">
+                      Refresh Queue
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Job Type</label>
+                      <select
+                        value={agentJobKind}
+                        onChange={(event) => setAgentJobKind(event.target.value as AgentJobKind)}
+                        className="input-field"
+                      >
+                        {(Object.entries(AGENT_JOB_KIND_LABELS) as Array<[AgentJobKind, string]>).map(([kind, label]) => (
+                          <option key={kind} value={kind}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Title</label>
+                      <input
+                        value={agentJobTitle}
+                        onChange={(event) => setAgentJobTitle(event.target.value)}
+                        className="input-field"
+                        placeholder="Optional short label"
+                      />
+                    </div>
+                  </div>
+                  <textarea
+                    value={agentJobPrompt}
+                    onChange={(event) => setAgentJobPrompt(event.target.value)}
+                    className="input-field mt-3 min-h-28 resize-y"
+                    placeholder="Describe the research, browser workflow, coding task, or local action Sophia should prepare."
+                  />
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <button onClick={createAgentJob} className="btn-primary">
+                      Queue Agent Job
+                    </button>
+                    <span className="text-xs text-uvb-text-muted">{agentJobStatus}</span>
+                  </div>
+
+                  <div className="mt-5 space-y-3">
+                    {agentJobs.slice(0, 6).map((job) => (
+                      <div key={job.id} className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-3">
+                        <div className="mb-2 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-sm font-semibold text-uvb-text-primary">{job.title}</h4>
+                              <span className="rounded-full border border-uvb-steel-blue/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-uvb-steel-blue">
+                                {AGENT_JOB_KIND_LABELS[job.kind]}
+                              </span>
+                              <span className="rounded-full border border-uvb-border/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-uvb-text-muted">
+                                {job.status}
+                              </span>
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-uvb-text-muted">{job.prompt}</p>
+                          </div>
+                          {job.status === "pending-approval" && (
+                            <div className="flex shrink-0 gap-2">
+                              <button onClick={() => updateAgentJobAction(job.id, "approve")} className="btn-primary text-xs">
+                                Approve
+                              </button>
+                              <button onClick={() => updateAgentJobAction(job.id, "cancel")} className="btn-ghost text-xs">
+                                Cancel
+                              </button>
+                            </div>
+                          )}
+                          {job.status !== "pending-approval" && (
+                            <button onClick={() => updateAgentJobAction(job.id, "delete")} className="btn-ghost shrink-0 text-xs">
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                          {job.executionPlan.slice(0, 4).map((step, index) => (
+                            <p key={`${job.id}:${index}`} className="rounded-md border border-uvb-border/20 bg-black/10 p-2 text-[11px] text-uvb-text-muted">
+                              {index + 1}. {step}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {!agentJobs.length && (
+                      <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4 text-sm text-uvb-text-muted">
+                        No jobs queued yet. Create one to stage Sophia&apos;s next supervised action.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="uvb-card">
+                  <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                        Agent Skill Intake
+                      </h3>
+                      <p className="mt-1 text-xs text-uvb-text-muted">
+                        Stage SKILL.md-style capabilities from open registries without auto-installing untrusted code.
+                      </p>
+                    </div>
+                    <button onClick={loadAgentSkills} className="btn-ghost text-sm">
+                      Refresh Skills
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+                    {agentSkillRegistries.slice(0, 6).map((registry) => (
+                      <a
+                        key={registry.id}
+                        href={registry.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-3 transition-colors hover:border-uvb-steel-blue/40"
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <h4 className="text-sm font-semibold text-uvb-text-primary">{registry.name}</h4>
+                          <span className="rounded-full border border-uvb-border/30 px-2 py-0.5 text-[9px] uppercase tracking-wider text-uvb-text-muted">
+                            registry
+                          </span>
+                        </div>
+                        <p className="text-xs leading-relaxed text-uvb-text-muted">{registry.notes}</p>
+                      </a>
+                    ))}
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Skill Name</label>
+                      <input
+                        value={skillName}
+                        onChange={(event) => setSkillName(event.target.value)}
+                        className="input-field"
+                        placeholder="Browser research playbook"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Source URL</label>
+                      <input
+                        value={skillSourceUrl}
+                        onChange={(event) => setSkillSourceUrl(event.target.value)}
+                        className="input-field"
+                        placeholder="https://github.com/org/repo/tree/main/skill"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Registry</label>
+                      <select
+                        value={skillRegistry}
+                        onChange={(event) => setSkillRegistry(event.target.value)}
+                        className="input-field"
+                      >
+                        <option value="manual">Manual / direct URL</option>
+                        {agentSkillRegistries.map((registry) => (
+                          <option key={registry.id} value={registry.id}>
+                            {registry.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Trust Tier</label>
+                      <select
+                        value={skillTrustTier}
+                        onChange={(event) => setSkillTrustTier(event.target.value as AgentSkillTrustTier)}
+                        className="input-field"
+                      >
+                        <option value="community">Community</option>
+                        <option value="reviewed">Reviewed</option>
+                        <option value="verified">Verified</option>
+                        <option value="local">Local</option>
+                      </select>
+                    </div>
+                  </div>
+                  <input
+                    value={skillDescription}
+                    onChange={(event) => setSkillDescription(event.target.value)}
+                    className="input-field mt-3"
+                    placeholder="What this skill should let Sophia do"
+                  />
+                  <textarea
+                    value={skillMd}
+                    onChange={(event) => setSkillMd(event.target.value)}
+                    className="input-field mt-3 min-h-28 resize-y"
+                    placeholder="Optional SKILL.md content for local security scan before approval"
+                  />
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <button onClick={importAgentSkill} className="btn-primary">
+                      Stage Skill Candidate
+                    </button>
+                    <span className="text-xs text-uvb-text-muted">{agentSkillStatus}</span>
+                  </div>
+
+                  <div className="mt-5 space-y-3">
+                    {agentSkills.slice(0, 6).map((skill) => (
+                      <div key={skill.id} className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-3">
+                        <div className="mb-2 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-sm font-semibold text-uvb-text-primary">{skill.name}</h4>
+                              <span className="rounded-full border border-uvb-border/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-uvb-text-muted">
+                                {skill.trustTier}
+                              </span>
+                              <span className="rounded-full border border-uvb-steel-blue/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-uvb-steel-blue">
+                                {skill.status}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-uvb-text-muted">{skill.description || skill.sourceUrl}</p>
+                          </div>
+                          {skill.status === "candidate" && (
+                            <div className="flex shrink-0 gap-2">
+                              <button onClick={() => updateAgentSkillStatus(skill.id, "approve")} className="btn-primary text-xs">
+                                Approve
+                              </button>
+                              <button onClick={() => updateAgentSkillStatus(skill.id, "block")} className="btn-ghost text-xs">
+                                Block
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {skill.risks.map((risk, index) => (
+                            <span
+                              key={`${skill.id}:risk:${index}`}
+                              className={`rounded-md border px-2 py-1 text-[10px] ${
+                                risk.level === "high"
+                                  ? "border-red-500/30 text-red-300"
+                                  : risk.level === "medium"
+                                    ? "border-uvb-accent-yellow/30 text-uvb-accent-yellow"
+                                    : "border-uvb-neon-green/30 text-uvb-neon-green"
+                              }`}
+                            >
+                              {risk.level}: {risk.reason}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {!agentSkills.length && (
+                      <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4 text-sm text-uvb-text-muted">
+                        No external skills staged yet. Stage metadata first, then approve only after review.
+                      </div>
+                    )}
                   </div>
                 </div>
 

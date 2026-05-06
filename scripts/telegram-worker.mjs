@@ -88,6 +88,53 @@ async function logTelegramChatTurn(message, userText, assistantText, messageType
   }
 }
 
+function parseAgentCommand(text) {
+  const match = text.match(/^\/(research|browser|code|computer)(?:@\w+)?\s+([\s\S]+)/i);
+  if (!match) return null;
+  const command = match[1].toLowerCase();
+  const prompt = match[2].trim();
+  if (!prompt) return null;
+  return {
+    kind:
+      command === "browser"
+        ? "browser-use"
+        : command === "code"
+          ? "coding"
+          : command === "computer"
+            ? "computer-use"
+            : "deep-research",
+    prompt,
+  };
+}
+
+async function queueAgentJobFromTelegram(message, command) {
+  const response = await fetch(`${uvbUrl}/api/agent/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "create",
+      kind: command.kind,
+      title: `Telegram ${command.kind.replace("-", " ")}`,
+      prompt: command.prompt,
+      requestedBy: "telegram",
+      settings: {
+        approvalMode: "ask-every-time",
+        workspaceRoot: root,
+        allowedDomains: "github.com, npmjs.com, docs.kilo.ai, kilo.ai, microsoft.com, openai.com",
+        blockedPaths: ".env*, **/node_modules/**, **/.git/**, C:\\Users\\*\\AppData\\Roaming\\Telegram Desktop\\tdata",
+        codingProvider: "local-uvb",
+        providerBaseUrl: "",
+        preferFreeModels: true,
+      },
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.job) {
+    throw new Error(data.error ?? `Agent job queue returned ${response.status}`);
+  }
+  return data.job;
+}
+
 async function telegram(method, payload) {
   const response = await fetch(`${apiBase}/${method}`, {
     method: "POST",
@@ -725,6 +772,21 @@ async function handleMessage(message) {
       content = await buildTelegramImageContent(message);
       logText = message.caption?.trim() || "[Telegram image]";
       messageType = "image";
+    }
+
+    const agentCommand = text ? parseAgentCommand(text) : null;
+    if (agentCommand) {
+      await sendAction(chatId, "typing");
+      const job = await queueAgentJobFromTelegram(message, agentCommand);
+      const answer = [
+        `Queued ${job.kind} job for supervised execution.`,
+        `Status: ${job.status}`,
+        `Job ID: ${job.id}`,
+        "Open UVB Settings > Agent Tools to approve, cancel, or inspect the execution plan.",
+      ].join("\n");
+      await logTelegramChatTurn(message, text, answer, "text");
+      await sendLongMessage(chatId, answer);
+      return;
     }
 
     if (!text && !content) {
