@@ -14,6 +14,12 @@ import {
 } from "@heroicons/react/24/outline";
 import { Brain, Database, HardDrive, Search } from "lucide-react";
 import { useAppStore, type ChatThread } from "@/stores/appStore";
+import {
+  DEFAULT_ALIAS_RULES,
+  loadAliasRules,
+  saveAliasRules,
+  type AliasRule,
+} from "@/lib/nameAliases";
 
 type MemoryType = "conversation" | "knowledge" | "context" | "preference";
 
@@ -121,7 +127,14 @@ function saveManualMemories(entries: MemoryEntry[]) {
 
 export default function MemoryBankPage() {
   const threads = useAppStore((state) => state.threads);
+  const [activeView, setActiveView] = useState<"memories" | "aliases">("memories");
   const [manualEntries, setManualEntries] = useState<MemoryEntry[]>(loadManualMemories);
+  const [aliasRules, setAliasRules] = useState<AliasRule[]>(loadAliasRules);
+  const [aliasStatus, setAliasStatus] = useState("");
+  const [aliasLabel, setAliasLabel] = useState("");
+  const [aliasPattern, setAliasPattern] = useState("");
+  const [aliasReplacement, setAliasReplacement] = useState("");
+  const [aliasNotes, setAliasNotes] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<MemoryType | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -159,6 +172,50 @@ export default function MemoryBankPage() {
       icon: HardDrive,
     },
   ];
+
+  const saveAliases = (rules = aliasRules, status = "Saved alias rules.") => {
+    setAliasRules(rules);
+    saveAliasRules(rules);
+    setAliasStatus(status);
+  };
+
+  const addAliasRule = () => {
+    const pattern = aliasPattern.trim();
+    const replacement = aliasReplacement.trim();
+    if (!pattern || !replacement) {
+      setAliasStatus("Pattern and replacement are required.");
+      return;
+    }
+    saveAliases(
+      [
+        {
+          id: `alias:${generateId()}`,
+          label: aliasLabel.trim() || replacement,
+          pattern,
+          replacement,
+          enabled: true,
+          notes: aliasNotes.trim(),
+        },
+        ...aliasRules,
+      ],
+      `Added alias rule for ${replacement}.`
+    );
+    setAliasLabel("");
+    setAliasPattern("");
+    setAliasReplacement("");
+    setAliasNotes("");
+  };
+
+  const updateAliasRule = (id: string, updates: Partial<AliasRule>) => {
+    saveAliases(
+      aliasRules.map((rule) => (rule.id === id ? { ...rule, ...updates } : rule)),
+      "Updated alias rule."
+    );
+  };
+
+  const deleteAliasRule = (id: string) => {
+    saveAliases(aliasRules.filter((rule) => rule.id !== id), "Deleted alias rule.");
+  };
 
   const clearMemoryForm = () => {
     setNewTitle("");
@@ -237,6 +294,135 @@ export default function MemoryBankPage() {
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-6">
+      <div className="flex flex-wrap gap-2">
+        {[
+          ["memories", "Memory Bank"],
+          ["aliases", "Alias Rules"],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setActiveView(id as "memories" | "aliases")}
+            className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+              activeView === id
+                ? "border-uvb-neon-green/30 bg-uvb-deep-teal/25 text-uvb-neon-green"
+                : "border-uvb-border/30 text-uvb-text-muted hover:text-uvb-text-secondary"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeView === "aliases" && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+          <div className="uvb-card">
+            <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                  Alias Rules
+                </h3>
+                <p className="mt-1 text-xs text-uvb-text-muted">
+                  Canonical spellings and phrases are injected into chat, voice, STT prompts, and response cleanup.
+                </p>
+              </div>
+              <button
+                onClick={() => saveAliases(DEFAULT_ALIAS_RULES, "Restored default alias rules.")}
+                className="btn-ghost text-sm"
+              >
+                Restore Defaults
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <input
+                value={aliasLabel}
+                onChange={(event) => setAliasLabel(event.target.value)}
+                className="input-field"
+                placeholder="Label, e.g. Preferred nickname"
+              />
+              <input
+                value={aliasPattern}
+                onChange={(event) => setAliasPattern(event.target.value)}
+                className="input-field"
+                placeholder="Regex pattern, e.g. \\bcody\\b"
+              />
+              <input
+                value={aliasReplacement}
+                onChange={(event) => setAliasReplacement(event.target.value)}
+                className="input-field"
+                placeholder="Replacement, e.g. Codee"
+              />
+              <input
+                value={aliasNotes}
+                onChange={(event) => setAliasNotes(event.target.value)}
+                className="input-field"
+                placeholder="Notes for Sophia and STT"
+              />
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button onClick={addAliasRule} className="btn-primary">
+                Add Alias
+              </button>
+              {aliasStatus && <span className="text-xs text-uvb-text-muted">{aliasStatus}</span>}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {aliasRules.map((rule) => (
+              <div key={rule.id} className="uvb-card">
+                <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <h4 className="text-sm font-semibold text-uvb-text-primary">{rule.label}</h4>
+                    <p className="mt-1 text-xs text-uvb-text-muted">
+                      {rule.pattern} {"->"} {rule.replacement}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => updateAliasRule(rule.id, { enabled: !rule.enabled })}
+                      className={`rounded-lg border px-3 py-1.5 text-xs ${
+                        rule.enabled
+                          ? "border-uvb-neon-green/30 text-uvb-neon-green"
+                          : "border-uvb-border/30 text-uvb-text-muted"
+                      }`}
+                    >
+                      {rule.enabled ? "Enabled" : "Disabled"}
+                    </button>
+                    <button onClick={() => deleteAliasRule(rule.id)} className="btn-ghost text-xs text-red-300">
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <input
+                    value={rule.label}
+                    onChange={(event) => updateAliasRule(rule.id, { label: event.target.value })}
+                    className="input-field"
+                  />
+                  <input
+                    value={rule.pattern}
+                    onChange={(event) => updateAliasRule(rule.id, { pattern: event.target.value })}
+                    className="input-field"
+                  />
+                  <input
+                    value={rule.replacement}
+                    onChange={(event) => updateAliasRule(rule.id, { replacement: event.target.value })}
+                    className="input-field"
+                  />
+                  <input
+                    value={rule.notes}
+                    onChange={(event) => updateAliasRule(rule.id, { notes: event.target.value })}
+                    className="input-field"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
+      {activeView === "memories" && (
+        <>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {stats.map((stat) => (
           <div key={stat.label} className="uvb-card flex items-center gap-3">
@@ -447,6 +633,8 @@ export default function MemoryBankPage() {
           Manual memories can be created, edited, deleted, searched, and exported. Semantic embeddings and automatic retrieval into chat are still future work.
         </p>
       </div>
+        </>
+      )}
     </div>
   );
 }

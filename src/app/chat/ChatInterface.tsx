@@ -42,6 +42,7 @@ import {
   loadIdentitySettings,
   type IdentitySettings,
 } from "@/lib/identitySettings";
+import { appendNameAliasSystemNote, applyNameAliases, loadAliasRules } from "@/lib/nameAliases";
 
 function generateId() {
   return Math.random().toString(36).substring(2, 11);
@@ -394,10 +395,25 @@ async function sendChatToModel(
   systemPrompt: string,
   signal?: AbortSignal
 ) {
+  const aliasRules = loadAliasRules();
+  const normalizedMessages = messages.map((message) => ({
+    ...message,
+    content:
+      typeof message.content === "string"
+        ? applyNameAliases(message.content, aliasRules)
+        : message.content.map((part) =>
+            part.type === "text" ? { ...part, text: applyNameAliases(part.text, aliasRules) } : part
+          ),
+  }));
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, settings, systemPrompt }),
+    body: JSON.stringify({
+      messages: normalizedMessages,
+      settings,
+      systemPrompt: appendNameAliasSystemNote(systemPrompt, aliasRules),
+      aliasRules,
+    }),
     signal,
   });
   const data = (await response.json()) as { content?: string; error?: string };
@@ -406,7 +422,7 @@ async function sendChatToModel(
     throw new Error(data.error ?? "The local model did not return a response.");
   }
 
-  return data.content;
+  return applyNameAliases(data.content, aliasRules);
 }
 
 export default function ChatInterface() {
@@ -996,7 +1012,10 @@ export default function ChatInterface() {
     attachments = pendingAttachments
   ) => {
     const attachedImages = attachments.filter((attachment) => attachment.kind === "image");
-    const promptText = userInput.trim() || (attachedImages.length ? DEFAULT_IMAGE_PROMPT : "");
+    const promptText = applyNameAliases(
+      userInput.trim() || (attachedImages.length ? DEFAULT_IMAGE_PROMPT : ""),
+      loadAliasRules()
+    );
     if (!promptText && !attachments.length) return;
 
     let threadId = activeThreadId;
@@ -1105,7 +1124,7 @@ export default function ChatInterface() {
   };
 
   const generateLiveVoiceResponse = async (threadId: string, transcript: string) => {
-    const cleanTranscript = transcript.trim();
+    const cleanTranscript = applyNameAliases(transcript.trim(), loadAliasRules());
     if (!cleanTranscript || pipecatFallbackInFlightRef.current) return;
 
     pipecatFallbackInFlightRef.current = true;
@@ -1141,7 +1160,7 @@ export default function ChatInterface() {
         temperature: Math.min(currentModelSettings.temperature, 0.45),
       };
       const liveSystemPrompt = [
-        currentVoiceSettings.systemPrompt,
+        appendNameAliasSystemNote(currentVoiceSettings.systemPrompt, loadAliasRules()),
         "Live voice response mode: answer in one or two short spoken sentences. No markdown, no lists, no headings unless the user explicitly asks.",
       ]
         .filter(Boolean)
@@ -1201,7 +1220,7 @@ export default function ChatInterface() {
   };
 
   const flushLiveVoiceTurn = () => {
-    const transcript = pipecatPendingTranscriptRef.current.trim();
+    const transcript = applyNameAliases(pipecatPendingTranscriptRef.current.trim(), loadAliasRules());
     if (!transcript) return;
 
     const threadId = ensureThreadForLiveVoice(transcript);
@@ -1249,6 +1268,7 @@ export default function ChatInterface() {
     formData.append("model", voiceSettings.sttModel);
     formData.append("language", voiceSettings.sttLanguage);
     formData.append("prompt", voiceSettings.sttPrompt);
+    formData.append("aliasRules", JSON.stringify(loadAliasRules()));
 
     const response = await fetch("/api/stt", {
       method: "POST",
@@ -1260,7 +1280,7 @@ export default function ChatInterface() {
       throw new Error(data.error ?? "STT returned no transcript.");
     }
 
-    return data.text;
+    return applyNameAliases(data.text, loadAliasRules());
   };
 
   const stopVoiceLevelMonitor = async () => {
@@ -1543,12 +1563,13 @@ export default function ChatInterface() {
     }
 
     if (data.type === "transcript" && data.text) {
-      const threadId = ensureThreadForLiveVoice(data.text);
-      setLiveTranscript(data.text);
+      const text = applyNameAliases(data.text, loadAliasRules());
+      const threadId = ensureThreadForLiveVoice(text);
+      setLiveTranscript(text);
       addMessage(threadId, {
         id: generateId(),
         role: "user",
-        content: data.text,
+        content: text,
         timestamp: Date.now(),
         type: "voice",
       });
@@ -1556,11 +1577,12 @@ export default function ChatInterface() {
     }
 
     if (data.type === "assistant" && data.text) {
+      const text = applyNameAliases(data.text, loadAliasRules());
       const threadId = ensureThreadForLiveVoice();
       addMessage(threadId, {
         id: generateId(),
         role: "assistant",
-        content: data.text,
+        content: text,
         timestamp: Date.now(),
         type: "text",
       });
@@ -1615,14 +1637,17 @@ export default function ChatInterface() {
           .slice(-16)
           .map((message) => ({
             role: message.role,
-            content: message.content,
+            content: applyNameAliases(message.content, loadAliasRules()),
           })) ?? [];
 
       socket.send(
         JSON.stringify({
           type: "start",
           modelSettings,
-          voiceSettings,
+          voiceSettings: {
+            ...voiceSettings,
+            systemPrompt: appendNameAliasSystemNote(voiceSettings.systemPrompt, loadAliasRules()),
+          },
           history,
         })
       );
@@ -1686,7 +1711,7 @@ export default function ChatInterface() {
     };
 
     const upsertAssistantText = (text: string) => {
-      const trimmed = text.trim();
+      const trimmed = applyNameAliases(text.trim(), loadAliasRules());
       if (!trimmed) return;
       clearPipecatFallbackTimer();
       pipecatPendingTranscriptRef.current = "";
@@ -1857,7 +1882,10 @@ export default function ChatInterface() {
         endpoint: currentVoiceSettings.liveWebRtcUrl,
         requestData: {
           modelSettings: currentModelSettings,
-          voiceSettings: currentVoiceSettings,
+          voiceSettings: {
+            ...currentVoiceSettings,
+            systemPrompt: appendNameAliasSystemNote(currentVoiceSettings.systemPrompt, loadAliasRules()),
+          },
         },
       },
     });

@@ -9,6 +9,7 @@
         "@heroicons/react": "^2.2.0",
         "@pipecat-ai/client-js": "^1.7.0",
         "@pipecat-ai/small-webrtc-transport": "^1.10.0",
+        "@pixiv/three-vrm": "^3.5.2",
         "framer-motion": "^12.38.0",
         "jszip": "^3.10.1",
         "lucide-react": "^1.7.0",
@@ -17,6 +18,7 @@
         "pdf-parse": "^2.4.5",
         "react": "^19.2.3",
         "react-dom": "^19.2.3",
+        "three": "^0.184.0",
         "zustand": "^5.0.12",
       },
       "devDependencies": {
@@ -231,6 +233,34 @@
     "@pipecat-ai/client-js": ["@pipecat-ai/client-js@1.7.0", "", { "dependencies": { "@types/events": "^3.0.3", "bowser": "^2.11.0", "clone-deep": "^4.0.1", "events": "^3.3.0", "typed-emitter": "^2.1.0", "uuid": "^10.0.0" } }, "sha512-52RoctPc1EdzlJwy/uP3dmmcVPDF24SZyHEM0mOMK2EHvo6sN0MzM3h4rv6snyEdxBZYqS53eQMVU2L7nub2uw=="],
 
     "@pipecat-ai/small-webrtc-transport": ["@pipecat-ai/small-webrtc-transport@1.10.0", "", { "dependencies": { "@daily-co/daily-js": "^0.89.1", "dequal": "^2.0.3", "lodash": "^4.17.21" }, "peerDependencies": { "@pipecat-ai/client-js": "~1.7.0" } }, "sha512-cQYtmCBW1LLVmpmn03xUt+dB6CHBwnK7rv9BH7D1Q0VQOu2uNYM7Ay1b9J8Z71hLQj0YGu20hPhBKt1cvn8/Eg=="],
+
+    "@pixiv/three-vrm": ["@pixiv/three-vrm@3.5.2", "", { "dependencies": { "@pixiv/three-vrm-core": "3.5.2", "@pixiv/three-vrm-materials-hdr-emissive-multiplier": "3.5.2", "@pixiv/three-vrm-materials-mtoon": "3.5.2", "@pixiv/three-vrm-materials-v0compat": "3.5.2", "@pixiv/three-vrm-node-constraint": "3.5.2", "@pixiv/three-vrm-springbone": "3.5.2" }, "peerDependencies": { "three": ">=0.137" } }, "sha512-YC3T8WZvb18n1uzYS60I9WCc2kOJxWZ/Q0RfklFAg0nD3Dz/kvvEoCYfZj5idnJqOtbLUXZGXZF1KCXKUB2qHg=="],
+
+    "@pixiv/three-vrm-core": ["@pixiv/three-vrm-core@3.5.2", "", { "dependencies": { "@pixiv/types-vrm-0.0": "3.5.2", "@pixiv/types-vrmc-vrm-1.0": "3.5.2" }, "peerDependencies": { "three": ">=0.137" } }, "sha512-QFpkCvsD5VMApNyIqFEw1lxSKFCM5X8+715FsfsAOx5mLh2LP0E0pDmqpDjfau/kAkDpWquGwzzHmXdAYjc8mQ=="],
+
+    "@pixiv/three-vrm-materials-hdr-emissive-multiplier": ["@pixiv/three-vrm-materials-hdr-emissive-multiplier@3.5.2", "", { "dependencies": { "@pixiv/types-vrmc-materials-hdr-emissive-multiplier-1.0": "3.5.2" }, "peerDependencies": { "three": ">=0.137" } }, "sha512-XJk6l/kexWeYpZmQu0h6VBXPsx4IV2uCN/9EPSJV8usspmP8CcMOsWx/5ESW4DKvGFufbiFZ5J6SGECJOTXTYg=="],
+
+    "@pixiv/three-vrm-materials-mtoon": ["@pixiv/three-vrm-materials-mtoon@3.5.2", "", { "dependencies": { "@pixiv/types-vrm-0.0": "3.5.2", "@pixiv/types-vrmc-materials-mtoon-1.0": "3.5.2" }, "peerDependencies": { "three": ">=0.137" } }, "sha512-P0oobZJ+JrMae7jdGgHqQqcoHpp3WYXq5blyCMybfsgxh9KtDzJ2NpBXf57LQlkN0cD6iT0R299tAqfH/1Uqcg=="],
+
+    "@pixiv/three-vrm-materials-v0compat": ["@pixiv/three-vrm-materials-v0compat@3.5.2", "", { "dependencies": { "@pixiv/types-vrm-0.0": "3.5.2", "@pixiv/types-vrmc-materials-mtoon-1.0": "3.5.2" }, "peerDependencies": { "three": ">=0.137" } }, "sha512-KuAq0ewDGqDKP8lmLAFrhpwRhYnUhnck6HqjO90XJM1b6HgoqyZK2CNOfTsgJQMJgp7sXF6J0EhjCkBiXTNvGA=="],
+
+    "@pixiv/three-vrm-node-constraint": ["@pixiv/three-vrm-node-constraint@3.5.2", "", { "dependencies": { "@pixiv/types-vrmc-node-constraint-1.0": "3.5.2" }, "peerDependencies": { "three": ">=0.137" } }, "sha512-jUBL6XkgTKhf/YgkDILHYAjOlN4n1Oz2dSSSvIfbJ0RVDah9jACm2775ZTult9ADgWmyvBsJQUr5u8JWOMLOKg=="],
+
+    "@pixiv/three-vrm-springbone": ["@pixiv/three-vrm-springbone@3.5.2", "", { "dependencies": { "@pixiv/types-vrm-0.0": "3.5.2", "@pixiv/types-vrmc-springbone-1.0": "3.5.2", "@pixiv/types-vrmc-springbone-extended-collider-1.0": "3.5.2" }, "peerDependencies": { "three": ">=0.137" } }, "sha512-+V3ok2W93f7U4wTcclgZxwz3hKe78DjStl1lCBsORKTo21tLMHyeHoNDQCJ8i1bvjLrr4QLfGYH/oBbVNPxvWQ=="],
+
+    "@pixiv/types-vrm-0.0": ["@pixiv/types-vrm-0.0@3.5.2", "", {}, "sha512-H+aiDQqezc1plVJFyvxK4/gfFtpKlK9WghumHGm+dnsRoROLmUZw6sQoHmpd9UoXI2hu1UHiIyyJLHP/MMaWhQ=="],
+
+    "@pixiv/types-vrmc-materials-hdr-emissive-multiplier-1.0": ["@pixiv/types-vrmc-materials-hdr-emissive-multiplier-1.0@3.5.2", "", {}, "sha512-dv8oJ8uFRsGqLUtV75Dovmg3lbTbu5oi5s+P/5+oPy7LCs/JsJtSDXCycDwQBYtrie797VMHp4b7G8TvGCP+gQ=="],
+
+    "@pixiv/types-vrmc-materials-mtoon-1.0": ["@pixiv/types-vrmc-materials-mtoon-1.0@3.5.2", "", {}, "sha512-dXC9vphdKDKQNpPpj61l+nveQK/soYFpfFqr74hKo/7BaYm5B6nZ6uImQYPCD7U2WICUF91lBoRYKD9ONTPHmQ=="],
+
+    "@pixiv/types-vrmc-node-constraint-1.0": ["@pixiv/types-vrmc-node-constraint-1.0@3.5.2", "", {}, "sha512-4swBTE/FgQlpfOPnnFQFD7GF/XiNB883prIr2KOhAqru0VjOyiYDQPIZTwynKtBFCIjUxp9DW4YQzR6ETqhQmw=="],
+
+    "@pixiv/types-vrmc-springbone-1.0": ["@pixiv/types-vrmc-springbone-1.0@3.5.2", "", {}, "sha512-Au+nszNPbOuaCdaymOQ5jXFknWb5Md7xjCzoP9aPAHeh1uRKHccR1MErtzuRit/9L6mNhW1OneXet9+Ple5GmQ=="],
+
+    "@pixiv/types-vrmc-springbone-extended-collider-1.0": ["@pixiv/types-vrmc-springbone-extended-collider-1.0@3.5.2", "", {}, "sha512-W1CeeAwm6ybiWHrQcqOFOvcO/9LKzLA2fA0wBT30BCwvQFLIwo77mU91N88+TcEeXdH+RxVil/oEdVH7aFZ6nw=="],
+
+    "@pixiv/types-vrmc-vrm-1.0": ["@pixiv/types-vrmc-vrm-1.0@3.5.2", "", {}, "sha512-kgvRCJc9J0ruaVIxC5R9x4ZYNpM1bxs7vSMcl4SYPi2+baolHvXQiH0kFaN61+rFleld+sOOjDHtE98egY2dxQ=="],
 
     "@react-aria/focus": ["@react-aria/focus@3.21.5", "", { "dependencies": { "@react-aria/interactions": "^3.27.1", "@react-aria/utils": "^3.33.1", "@react-types/shared": "^3.33.1", "@swc/helpers": "^0.5.0", "clsx": "^2.0.0" }, "peerDependencies": { "react": "^16.8.0 || ^17.0.0-rc.1 || ^18.0.0 || ^19.0.0-rc.1", "react-dom": "^16.8.0 || ^17.0.0-rc.1 || ^18.0.0 || ^19.0.0-rc.1" } }, "sha512-V18fwCyf8zqgJdpLQeDU5ZRNd9TeOfBbhLgmX77Zr5ae9XwaoJ1R3SFJG1wCJX60t34AW+aLZSEEK+saQElf3Q=="],
 
@@ -949,6 +979,8 @@
     "tailwindcss": ["tailwindcss@4.1.17", "", {}, "sha512-j9Ee2YjuQqYT9bbRTfTZht9W/ytp5H+jJpZKiYdP/bpnXARAuELt9ofP0lPnmHjbga7SNQIxdTAXCmtKVYjN+Q=="],
 
     "tapable": ["tapable@2.3.0", "", {}, "sha512-g9ljZiwki/LfxmQADO3dEY1CbpmXT5Hm2fJ+QaGKwSXUylMybePR7/67YW7jOrrvjEgL1Fmz5kzyAjWVWLlucg=="],
+
+    "three": ["three@0.184.0", "", {}, "sha512-wtTRjG92pM5eUg/KuUnHsqSAlPM296brTOcLgMRqEeylYTh/CdtvKUvCyyCQTzFuStieWxvZb8mVTMvdPyUpxg=="],
 
     "tinyglobby": ["tinyglobby@0.2.15", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.3" } }, "sha512-j2Zq4NyQYG5XMST4cbs02Ak8iJUdxRM0XI5QyxXuZOzKOINmWurp3smXu3y5wDcJrptwpSjgXHzIQxR0omXljQ=="],
 

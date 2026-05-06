@@ -12,6 +12,7 @@ import MediaStudioPage from "@/app/media/MediaStudioPage";
 import PodcastStudioPage from "@/app/podcast/PodcastStudioPage";
 import MemoryBankPage from "@/app/memory/MemoryBankPage";
 import SettingsPage from "@/app/settings/SettingsPage";
+import AvatarCompanion from "@/components/avatar/AvatarCompanion";
 import { useEffect, useState } from "react";
 import {
   applyUiSettings,
@@ -134,6 +135,7 @@ export default function Home() {
       </div>
 
       {/* Command Palette overlay */}
+      <AvatarCompanion />
       <CommandPalette />
     </div>
   );

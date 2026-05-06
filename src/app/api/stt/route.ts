@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { applyNameAliases, buildAliasSystemNote, normalizeAliasRules, type AliasRule } from "@/lib/nameAliases";
 
 const DEFAULT_STT_URL =
   process.env.UVB_STT_URL ?? "http://127.0.0.1:8001/v1/audio/transcriptions";
@@ -18,6 +19,26 @@ function appendOptional(payload: FormData, key: string, value: FormDataEntryValu
   }
 }
 
+function aliasPrompt(prompt: string, rules: AliasRule[]) {
+  return [prompt.trim(), buildAliasSystemNote(rules)].filter(Boolean).join("\n\n");
+}
+
+function aliasHotwords(rules: AliasRule[]) {
+  return normalizeAliasRules(rules)
+    .filter((rule) => rule.enabled)
+    .map((rule) => rule.replacement)
+    .join(", ");
+}
+
+function parseAliasRules(value: FormDataEntryValue | null) {
+  try {
+    const parsed = JSON.parse(String(value || "null")) as Partial<AliasRule>[] | null;
+    return normalizeAliasRules(parsed || undefined);
+  } catch {
+    return normalizeAliasRules();
+  }
+}
+
 export async function POST(request: NextRequest) {
   let incoming: FormData;
 
@@ -34,18 +55,29 @@ export async function POST(request: NextRequest) {
 
   const endpoint = String(incoming.get("endpoint") || DEFAULT_STT_URL).trim();
   const model = String(incoming.get("model") || DEFAULT_STT_MODEL).trim();
+  const aliasRules = parseAliasRules(incoming.get("aliasRules"));
   const payload = new FormData();
   payload.append("file", file, file.name || "recording.webm");
   payload.append("model", model);
   appendOptional(payload, "language", incoming.get("language") || DEFAULT_STT_LANGUAGE);
-  appendOptional(payload, "prompt", incoming.get("prompt") || DEFAULT_STT_PROMPT);
+  appendOptional(
+    payload,
+    "prompt",
+    aliasPrompt(String(incoming.get("prompt") || DEFAULT_STT_PROMPT), aliasRules)
+  );
   appendOptional(
     payload,
     "response_format",
     incoming.get("response_format") || DEFAULT_STT_RESPONSE_FORMAT
   );
   appendOptional(payload, "temperature", incoming.get("temperature") || DEFAULT_STT_TEMPERATURE);
-  appendOptional(payload, "hotwords", incoming.get("hotwords") || process.env.UVB_STT_HOTWORDS || "");
+  appendOptional(
+    payload,
+    "hotwords",
+    [incoming.get("hotwords") || process.env.UVB_STT_HOTWORDS || "", aliasHotwords(aliasRules)]
+      .filter(Boolean)
+      .join(", ")
+  );
 
   try {
     const response = await fetch(endpoint, {
@@ -69,7 +101,7 @@ export async function POST(request: NextRequest) {
       text = rawText;
     }
 
-    return NextResponse.json({ text: text.trim() });
+    return NextResponse.json({ text: applyNameAliases(text.trim(), aliasRules) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown STT bridge error.";
     return NextResponse.json({ error: `Could not reach STT endpoint: ${message}` }, { status: 502 });

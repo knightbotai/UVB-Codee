@@ -18,6 +18,7 @@
     "@heroicons/react": "^2.2.0",
     "@pipecat-ai/client-js": "^1.7.0",
     "@pipecat-ai/small-webrtc-transport": "^1.10.0",
+    "@pixiv/three-vrm": "^3.5.2",
     "framer-motion": "^12.38.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.7.0",
@@ -26,6 +27,7 @@
     "pdf-parse": "^2.4.5",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "three": "^0.184.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

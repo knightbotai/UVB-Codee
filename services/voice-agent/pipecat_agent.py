@@ -50,6 +50,11 @@ DEFAULT_STT_PROMPT = (
     "boundaries, commas, periods, and question marks. Preserve the speaker's words exactly."
 )
 
+ALIAS_SYSTEM_NOTE = (
+    "Alias rules: normalize Justin to Jusstin, Cody to Codee, and butt stuff to "
+    "Butt Stuff whenever they appear. Correct spellings: J-U-S-S-T-I-N and C-O-D-E-E."
+)
+
 
 def env(name: str, default: str) -> str:
     return os.getenv(name, default).strip()
@@ -62,6 +67,17 @@ def normalize_base_url(value: str) -> str:
 
 def truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def append_alias_system_note(value: str) -> str:
+    value = value.strip()
+    if "J-U-S-S-T-I-N" in value and "C-O-D-E-E" in value and "Butt Stuff" in value:
+        return value
+    return "\n\n".join(part for part in (value, ALIAS_SYSTEM_NOTE) if part)
+
+
+def alias_prompt(value: str) -> str:
+    return append_alias_system_note(value)
 
 
 def stt_language(value: Any) -> Language:
@@ -162,9 +178,13 @@ def create_app() -> FastAPI:
             model=str(voice_settings.get("sttModel") or env("UVB_STT_MODEL", "Systran/faster-distil-whisper-large-v3")),
             language=stt_language(voice_settings.get("sttLanguage")),
             prompt=str(
-                voice_settings.get("sttPrompt")
-                or os.getenv("UVB_STT_PROMPT")
-                or DEFAULT_STT_PROMPT
+                alias_prompt(
+                    str(
+                        voice_settings.get("sttPrompt")
+                        or os.getenv("UVB_STT_PROMPT")
+                        or DEFAULT_STT_PROMPT
+                    )
+                )
             ),
             temperature=float(voice_settings.get("sttTemperature") or env("UVB_STT_TEMPERATURE", "0")),
         )
@@ -191,9 +211,11 @@ def create_app() -> FastAPI:
                 messages=[
                     {
                         "role": "system",
-                        "content": str(
-                            voice_settings.get("systemPrompt")
-                            or env("UVB_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+                        "content": append_alias_system_note(
+                            str(
+                                voice_settings.get("systemPrompt")
+                                or env("UVB_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+                            )
                         ),
                     }
                 ]

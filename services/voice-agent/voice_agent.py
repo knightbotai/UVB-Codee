@@ -60,6 +60,14 @@ DEFAULT_VOICE_SETTINGS = {
     ),
 }
 
+ALIAS_SYSTEM_NOTE = (
+    "Alias rules: if a person is referred to as Justin with one S, normalize it "
+    "to Jusstin with two S's. The correct spelling is J-U-S-S-T-I-N. If the "
+    "phrase butt stuff appears, normalize it to Butt Stuff with two T's in Butt "
+    "and capital B/S. If Cody appears, normalize it to Codee. The correct "
+    "assistant nickname is C-O-D-E-E."
+)
+
 
 def now_ms() -> int:
     return int(time.perf_counter() * 1000)
@@ -89,6 +97,25 @@ def sanitize_text_for_speech(text: str) -> str:
     cleaned = re.sub(r"(?m)^\s*[-*+]\s+", "", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+def apply_text_aliases(text: str) -> str:
+    text = re.sub(r"\bJUSTIN\b", "JUSSTIN", text)
+    text = re.sub(r"\bJustin\b", "Jusstin", text)
+    text = re.sub(r"\bjustin\b", "jusstin", text)
+    text = re.sub(r"\b[Bb][Uu][Tt]{1,2}\s+[Ss][Tt][Uu][Ff]{1,2}\b", "Butt Stuff", text)
+    return re.sub(r"\b[Cc][Oo][Dd][Yy]\b", "Codee", text)
+
+
+def append_alias_system_note(system_prompt: str) -> str:
+    system_prompt = system_prompt.strip()
+    if (
+        ("J-U-S-S-T-I-N" in system_prompt or "Jusstin with two S" in system_prompt)
+        and "Butt Stuff" in system_prompt
+        and "C-O-D-E-E" in system_prompt
+    ):
+        return system_prompt
+    return "\n\n".join(part for part in (system_prompt, ALIAS_SYSTEM_NOTE) if part)
 
 
 @dataclass
@@ -166,7 +193,9 @@ async def complete_chat(
     temperature = float(model_settings.get("temperature") or 0.7)
     max_tokens = int(model_settings.get("maxTokens") or 900)
     enable_thinking = bool(model_settings.get("enableThinking") or False)
-    system_prompt = str(voice_settings.get("systemPrompt") or DEFAULT_VOICE_SETTINGS["systemPrompt"])
+    system_prompt = append_alias_system_note(
+        str(voice_settings.get("systemPrompt") or DEFAULT_VOICE_SETTINGS["systemPrompt"])
+    )
 
     history = [
         message
@@ -176,7 +205,7 @@ async def complete_chat(
     messages = [
         {"role": "system", "content": system_prompt},
         *history,
-        {"role": "user", "content": transcript},
+        {"role": "user", "content": apply_text_aliases(transcript)},
     ]
 
     async with aiohttp.ClientSession() as client:
@@ -208,7 +237,7 @@ async def complete_chat(
             )
             if not content:
                 raise RuntimeError("LLM returned an empty response.")
-            return content, now_ms() - started
+            return apply_text_aliases(content), now_ms() - started
 
 
 def resolve_tts_settings(voice_settings: dict[str, Any]) -> tuple[str, str, str]:
@@ -267,6 +296,7 @@ async def process_turn(websocket: Any, session_state: VoiceSession) -> None:
 
     await send_event(websocket, "status", message="Transcribing live voice audio...")
     transcript, stt_ms = await transcribe_audio(audio_bytes, session_state.voice_settings)
+    transcript = apply_text_aliases(transcript)
     await send_event(websocket, "transcript", text=transcript, latencyMs=stt_ms)
 
     await send_event(websocket, "status", message="Thinking through the local model...")
@@ -276,7 +306,7 @@ async def process_turn(websocket: Any, session_state: VoiceSession) -> None:
     session_state.history.extend(
         [
             {"role": "user", "content": transcript},
-            {"role": "assistant", "content": reply},
+            {"role": "assistant", "content": apply_text_aliases(reply)},
         ]
     )
 

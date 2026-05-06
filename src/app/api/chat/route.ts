@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadRuntimeSettings } from "@/lib/serverRuntimeSettings";
+import {
+  appendNameAliasSystemNote,
+  applyNameAliases,
+  normalizeAliasRules,
+  type AliasRule,
+} from "@/lib/nameAliases";
 
 const LLM_BASE_URL = process.env.UVB_LLM_BASE_URL ?? "http://127.0.0.1:8003/v1";
 const LLM_MODEL = process.env.UVB_LLM_MODEL ?? "qwen36-35b-a3b-heretic-nvfp4";
@@ -19,6 +25,7 @@ interface ChatMessage {
 interface ChatRequestBody {
   messages?: ChatMessage[];
   systemPrompt?: string;
+  aliasRules?: Partial<AliasRule>[];
   settings?: {
     baseUrl?: string;
     model?: string;
@@ -70,10 +77,14 @@ export async function POST(request: NextRequest) {
   const userMessages = Array.isArray(body.messages) ? body.messages : [];
   const runtime = await loadRuntimeSettings();
   const settings = body.settings ?? runtime.modelSettings;
+  const aliasRules = normalizeAliasRules(body.aliasRules);
   const systemPrompt =
-    body.systemPrompt?.trim() ||
-    runtime.voiceSettings.systemPrompt?.trim() ||
-    DEFAULT_SYSTEM_PROMPT;
+    appendNameAliasSystemNote(
+      body.systemPrompt?.trim() ||
+        runtime.voiceSettings.systemPrompt?.trim() ||
+        DEFAULT_SYSTEM_PROMPT,
+      aliasRules
+    );
   const baseUrl = normalizeBaseUrl(settings.baseUrl || LLM_BASE_URL);
   const model = settings.model?.trim() || LLM_MODEL;
   const apiKey = settings.apiKey?.trim() || LLM_API_KEY;
@@ -85,7 +96,7 @@ export async function POST(request: NextRequest) {
     : 1200;
   const enableThinking = settings.enableThinking ?? false;
 
-  const messages: ChatMessage[] = [
+    const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
     ...userMessages
       .filter(
@@ -93,6 +104,15 @@ export async function POST(request: NextRequest) {
           (message.role === "user" || message.role === "assistant") &&
           hasMessageContent(message.content)
       )
+      .map((message) => ({
+        ...message,
+        content:
+          typeof message.content === "string"
+            ? applyNameAliases(message.content, aliasRules)
+            : message.content.map((part) =>
+                part.type === "text" ? { ...part, text: applyNameAliases(part.text, aliasRules) } : part
+              ),
+      }))
       .slice(-20),
   ];
 
@@ -136,7 +156,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const content = data?.choices?.[0]?.message?.content?.trim();
+    const content = applyNameAliases(data?.choices?.[0]?.message?.content?.trim() ?? "", aliasRules);
     if (!content) {
       return NextResponse.json(
         { error: "Local model returned an empty response." },

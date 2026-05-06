@@ -35,6 +35,13 @@ import {
   type AgentToolSettings,
 } from "@/lib/agentToolSettings";
 import {
+  DEFAULT_AVATAR_SETTINGS,
+  loadAvatarSettings,
+  saveAvatarSettings,
+  type AvatarMood,
+  type AvatarSettings,
+} from "@/lib/avatarSettings";
+import {
   DEFAULT_UI_SETTINGS,
   UI_ACCENTS,
   UI_THEMES,
@@ -199,6 +206,8 @@ export default function SettingsPage() {
   } | null>(null);
   const [uiSettings, setUiSettings] = useState<UiSettings>(() => loadUiSettings());
   const [uiStatus, setUiStatus] = useState("");
+  const [avatarSettings, setAvatarSettings] = useState<AvatarSettings>(() => loadAvatarSettings());
+  const [avatarStatus, setAvatarStatus] = useState("");
   const [voiceStack, setVoiceStack] = useState<VoiceStackResponse | null>(null);
   const [voiceStackStatus, setVoiceStackStatus] = useState("Loading voice stack...");
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -337,9 +346,19 @@ export default function SettingsPage() {
     setUiStatus("Unsaved local interface preferences.");
   };
 
+  const updateAvatarSettings = (updates: Partial<AvatarSettings>) => {
+    setAvatarSettings((current) => ({ ...current, ...updates }));
+    setAvatarStatus("Unsaved avatar companion preferences.");
+  };
+
   const saveCurrentUiSettings = () => {
     saveUiSettings(uiSettings);
     setUiStatus("Saved local interface, privacy, and notification preferences.");
+  };
+
+  const saveCurrentAvatarSettings = () => {
+    saveAvatarSettings(avatarSettings);
+    setAvatarStatus("Saved Sophia avatar companion settings.");
   };
 
   const saveCurrentAgentToolSettings = () => {
@@ -686,6 +705,7 @@ export default function SettingsPage() {
       modelSettings,
       voiceSettings,
       uiSettings,
+      avatarSettings,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
@@ -707,6 +727,7 @@ export default function SettingsPage() {
         identitySettings?: Partial<IdentitySettings>;
         agentToolSettings?: Partial<AgentToolSettings>;
         uiSettings?: Partial<UiSettings>;
+        avatarSettings?: Partial<AvatarSettings>;
       };
 
       if (data.modelSettings) {
@@ -750,6 +771,12 @@ export default function SettingsPage() {
         const nextUiSettings = { ...DEFAULT_UI_SETTINGS, ...data.uiSettings };
         setUiSettings(nextUiSettings);
         saveUiSettings(nextUiSettings);
+      }
+
+      if (data.avatarSettings) {
+        const nextAvatarSettings = { ...DEFAULT_AVATAR_SETTINGS, ...data.avatarSettings };
+        setAvatarSettings(nextAvatarSettings);
+        saveAvatarSettings(nextAvatarSettings);
       }
 
       setProfileStatus("Imported profile and applied settings.");
@@ -2217,6 +2244,69 @@ export default function SettingsPage() {
                       </span>
                     </span>
                   </label>
+                  <div className="mt-4 rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4">
+                    <h4 className="mb-3 text-sm font-semibold text-uvb-text-primary">
+                      Local Coder Handoff
+                    </h4>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <div>
+                        <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                          Adapter
+                        </label>
+                        <select
+                          value={agentToolSettings.localCoderAdapter}
+                          onChange={(event) =>
+                            updateAgentToolSettings({
+                              localCoderAdapter: event.target.value as AgentToolSettings["localCoderAdapter"],
+                            })
+                          }
+                          className="input-field"
+                        >
+                          <option value="none">None</option>
+                          <option value="vscode">VS Code</option>
+                          <option value="kilocode">Kilo Code</option>
+                          <option value="antigravity">Antigravity-style IDE</option>
+                          <option value="codex">Codex CLI</option>
+                          <option value="openhands">OpenHands</option>
+                          <option value="custom">Custom command</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                          Workspace Mode
+                        </label>
+                        <select
+                          value={agentToolSettings.localCoderWorkspaceMode}
+                          onChange={(event) =>
+                            updateAgentToolSettings({
+                              localCoderWorkspaceMode: event.target.value as AgentToolSettings["localCoderWorkspaceMode"],
+                            })
+                          }
+                          className="input-field"
+                        >
+                          <option value="current-workspace">Current workspace</option>
+                          <option value="profile-workspace">Profile workspace</option>
+                          <option value="ask">Ask each time</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                          Command
+                        </label>
+                        <input
+                          value={agentToolSettings.localCoderCommand}
+                          onChange={(event) =>
+                            updateAgentToolSettings({ localCoderCommand: event.target.value })
+                          }
+                          className="input-field"
+                          placeholder="code . / kilo / custom launcher"
+                        />
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs leading-relaxed text-uvb-text-muted">
+                      This stages a supervised handoff target for approved coding jobs. The runner should still enforce workspace, blocked path, diff, and approval rules before launching any local coder.
+                    </p>
+                  </div>
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <button onClick={saveCurrentAgentToolSettings} className="btn-primary">
                       Save Agent Tool Settings
@@ -2318,6 +2408,204 @@ export default function SettingsPage() {
                         }`}
                       />
                     </button>
+                  </div>
+                </div>
+                <div className="uvb-card">
+                  <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                        Sophia Avatar Companion
+                      </h3>
+                      <p className="mt-1 text-xs text-uvb-text-muted">
+                        Local browser overlay now, with VRM, Live2D, stream overlay, and desktop companion runtimes staged.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => updateAvatarSettings({ enabled: !avatarSettings.enabled })}
+                      className={`relative h-6 w-11 rounded-full ${
+                        avatarSettings.enabled ? "bg-uvb-neon-green/30" : "bg-uvb-light-gray"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full shadow transition-all ${
+                          avatarSettings.enabled
+                            ? "right-0.5 bg-uvb-neon-green"
+                            : "left-0.5 bg-uvb-text-muted"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Display Name</label>
+                      <input
+                        value={avatarSettings.displayName}
+                        onChange={(event) => updateAvatarSettings({ displayName: event.target.value })}
+                        className="input-field"
+                        placeholder="Sophia"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Mode</label>
+                      <select
+                        value={avatarSettings.mode}
+                        onChange={(event) =>
+                          updateAvatarSettings({ mode: event.target.value as AvatarSettings["mode"] })
+                        }
+                        className="input-field"
+                      >
+                        <option value="browser-overlay">Browser overlay</option>
+                        <option value="desktop-companion">Desktop companion staged</option>
+                        <option value="stream-overlay">Stream overlay staged</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Style Runtime</label>
+                      <select
+                        value={avatarSettings.style}
+                        onChange={(event) =>
+                          updateAvatarSettings({ style: event.target.value as AvatarSettings["style"] })
+                        }
+                        className="input-field"
+                      >
+                        <option value="orb">Reactive orb</option>
+                        <option value="portrait">Portrait puck</option>
+                        <option value="vrm">VRM / three-vrm staged</option>
+                        <option value="live2d">Live2D staged</option>
+                        <option value="custom">Custom renderer</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Screen Position</label>
+                      <select
+                        value={avatarSettings.position}
+                        onChange={(event) =>
+                          updateAvatarSettings({ position: event.target.value as AvatarSettings["position"] })
+                        }
+                        className="input-field"
+                      >
+                        <option value="bottom-right">Bottom right</option>
+                        <option value="bottom-left">Bottom left</option>
+                        <option value="top-right">Top right</option>
+                        <option value="top-left">Top left</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Size: {avatarSettings.size}px
+                      </label>
+                      <input
+                        type="range"
+                        min="56"
+                        max="260"
+                        step="4"
+                        value={avatarSettings.size}
+                        onChange={(event) => updateAvatarSettings({ size: Number(event.target.value) })}
+                        className="w-full accent-uvb-neon-green"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Opacity: {Math.round(avatarSettings.opacity * 100)}%
+                      </label>
+                      <input
+                        type="range"
+                        min="0.2"
+                        max="1"
+                        step="0.05"
+                        value={avatarSettings.opacity}
+                        onChange={(event) => updateAvatarSettings({ opacity: Number(event.target.value) })}
+                        className="w-full accent-uvb-neon-green"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Avatar Asset URL</label>
+                      <input
+                        value={avatarSettings.assetUrl}
+                        onChange={(event) => updateAvatarSettings({ assetUrl: event.target.value })}
+                        className="input-field"
+                        placeholder="Optional portrait, VRM, Live2D, or renderer asset URL"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Desktop Runtime URL</label>
+                      <input
+                        value={avatarSettings.desktopRuntimeUrl}
+                        onChange={(event) => updateAvatarSettings({ desktopRuntimeUrl: event.target.value })}
+                        className="input-field"
+                        placeholder="ws://127.0.0.1:8790/avatar"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <label className="mb-2 block text-xs text-uvb-text-muted">Preview Mood</label>
+                    <div className="flex flex-wrap gap-2">
+                      {(["idle", "listening", "thinking", "speaking", "celebrating", "alert"] as AvatarMood[]).map(
+                        (mood) => (
+                          <button
+                            key={mood}
+                            onClick={() => updateAvatarSettings({ mood })}
+                            className={`rounded-lg border px-3 py-1.5 text-xs capitalize transition-colors ${
+                              avatarSettings.mood === mood
+                                ? "border-uvb-neon-green/30 bg-uvb-deep-teal/25 text-uvb-neon-green"
+                                : "border-uvb-border/30 text-uvb-text-muted hover:text-uvb-text-secondary"
+                            }`}
+                          >
+                            {mood}
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    {[
+                      ["reactToVoice", "Voice reactions"],
+                      ["reactToChat", "Chat reactions"],
+                      ["reactToSystem", "System reactions"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        onClick={() =>
+                          updateAvatarSettings({
+                            [key]: !avatarSettings[key as keyof AvatarSettings],
+                          } as Partial<AvatarSettings>)
+                        }
+                        className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                          avatarSettings[key as keyof AvatarSettings]
+                            ? "border-uvb-neon-green/30 bg-uvb-deep-teal/20 text-uvb-text-primary"
+                            : "border-uvb-border/30 bg-uvb-dark-gray/40 text-uvb-text-muted"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <textarea
+                    value={avatarSettings.notes}
+                    onChange={(event) => updateAvatarSettings({ notes: event.target.value })}
+                    className="input-field mt-4 min-h-20 resize-y"
+                    placeholder="Avatar runtime notes, model path, rigging notes, or stream overlay plan..."
+                  />
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button onClick={saveCurrentAvatarSettings} className="btn-primary">
+                      Save Avatar Settings
+                    </button>
+                    <button
+                      onClick={() => {
+                        setAvatarSettings(DEFAULT_AVATAR_SETTINGS);
+                        saveAvatarSettings(DEFAULT_AVATAR_SETTINGS);
+                        setAvatarStatus("Restored Sophia avatar defaults.");
+                      }}
+                      className="btn-ghost"
+                    >
+                      Reset Avatar
+                    </button>
+                    {avatarStatus && <span className="text-xs text-uvb-text-muted">{avatarStatus}</span>}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">

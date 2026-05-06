@@ -9,6 +9,7 @@ export type AgentApprovalMode =
   | "trusted-local";
 
 export type AgentCodingProvider = "local-uvb" | "kilo-gateway" | "openai-compatible";
+export type LocalCoderAdapter = "none" | "vscode" | "kilocode" | "antigravity" | "codex" | "openhands" | "custom";
 
 export interface AgentToolSettings {
   browserUseEnabled: boolean;
@@ -27,6 +28,9 @@ export interface AgentToolSettings {
   providerBaseUrl: string;
   providerModel: string;
   providerApiKey: string;
+  localCoderAdapter: LocalCoderAdapter;
+  localCoderCommand: string;
+  localCoderWorkspaceMode: "current-workspace" | "profile-workspace" | "ask";
   preferFreeModels: boolean;
   auditLogEnabled: boolean;
 }
@@ -48,6 +52,9 @@ export const DEFAULT_AGENT_TOOL_SETTINGS: AgentToolSettings = {
   providerBaseUrl: "https://api.kilo.ai/api/gateway",
   providerModel: "",
   providerApiKey: "",
+  localCoderAdapter: "none",
+  localCoderCommand: "",
+  localCoderWorkspaceMode: "current-workspace",
   preferFreeModels: true,
   auditLogEnabled: true,
 };
@@ -76,6 +83,19 @@ export function normalizeAgentToolSettings(
     settings.codingProvider === "openai-compatible"
       ? settings.codingProvider
       : "local-uvb";
+  const localCoderAdapter: LocalCoderAdapter =
+    settings.localCoderAdapter === "vscode" ||
+    settings.localCoderAdapter === "kilocode" ||
+    settings.localCoderAdapter === "antigravity" ||
+    settings.localCoderAdapter === "codex" ||
+    settings.localCoderAdapter === "openhands" ||
+    settings.localCoderAdapter === "custom"
+      ? settings.localCoderAdapter
+      : "none";
+  const localCoderWorkspaceMode =
+    settings.localCoderWorkspaceMode === "profile-workspace" || settings.localCoderWorkspaceMode === "ask"
+      ? settings.localCoderWorkspaceMode
+      : "current-workspace";
 
   return {
     browserUseEnabled: safeBoolean(
@@ -106,6 +126,9 @@ export function normalizeAgentToolSettings(
     providerBaseUrl: safeString(settings.providerBaseUrl, DEFAULT_AGENT_TOOL_SETTINGS.providerBaseUrl),
     providerModel: safeString(settings.providerModel, DEFAULT_AGENT_TOOL_SETTINGS.providerModel),
     providerApiKey: safeString(settings.providerApiKey, DEFAULT_AGENT_TOOL_SETTINGS.providerApiKey),
+    localCoderAdapter,
+    localCoderCommand: safeString(settings.localCoderCommand, DEFAULT_AGENT_TOOL_SETTINGS.localCoderCommand),
+    localCoderWorkspaceMode,
     preferFreeModels: safeBoolean(
       settings.preferFreeModels,
       DEFAULT_AGENT_TOOL_SETTINGS.preferFreeModels

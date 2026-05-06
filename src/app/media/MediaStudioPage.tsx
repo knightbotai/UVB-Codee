@@ -11,9 +11,14 @@ import {
   EyeIcon,
   DocumentTextIcon,
 } from "@heroicons/react/24/outline";
-import { ImageIcon, Video, FileText } from "lucide-react";
+import { ImageIcon, Video, FileText, WandSparkles } from "lucide-react";
+import {
+  loadImageGenerationSettings,
+  saveImageGenerationSettings,
+  type ImageGenerationSettings,
+} from "@/lib/imageGenerationSettings";
 
-type MediaTab = "image" | "video";
+type MediaTab = "image" | "video" | "generate";
 
 interface AnalysisResult {
   type: string;
@@ -44,6 +49,13 @@ export default function MediaStudioPage() {
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
   const [storyboardFrames, setStoryboardFrames] = useState<StoryboardFrame[]>([]);
   const [analysisError, setAnalysisError] = useState("");
+  const [generationSettings, setGenerationSettings] = useState<ImageGenerationSettings>(() =>
+    loadImageGenerationSettings()
+  );
+  const [generationPrompt, setGenerationPrompt] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [generationStatus, setGenerationStatus] = useState("ComfyUI image generation is ready to configure.");
+  const [isGenerating, setIsGenerating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -62,6 +74,83 @@ export default function MediaStudioPage() {
     setIsAnalyzing(false);
     setAnalysisError("");
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const updateGenerationSettings = (updates: Partial<ImageGenerationSettings>) => {
+    setGenerationSettings((current) => ({ ...current, ...updates }));
+    setGenerationStatus("Unsaved ComfyUI settings.");
+  };
+
+  const saveGenerationSettings = () => {
+    saveImageGenerationSettings(generationSettings);
+    setGenerationStatus("Saved ComfyUI settings locally.");
+  };
+
+  const testComfyConnection = async () => {
+    setGenerationStatus("Checking ComfyUI...");
+    try {
+      const params = new URLSearchParams({ endpoint: generationSettings.endpoint });
+      const response = await fetch(`/api/image/comfy?${params.toString()}`, { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as { online?: boolean; latencyMs?: number; error?: string };
+      setGenerationStatus(
+        data.online
+          ? `ComfyUI online in ${data.latencyMs ?? "?"} ms.`
+          : `ComfyUI is offline: ${data.error || response.statusText}`
+      );
+    } catch (error) {
+      setGenerationStatus(error instanceof Error ? error.message : "Could not check ComfyUI.");
+    }
+  };
+
+  const queueImageGeneration = async () => {
+    if (!generationPrompt.trim()) {
+      setGenerationStatus("Enter an image prompt first.");
+      return;
+    }
+    setIsGenerating(true);
+    setGenerationStatus("Queueing ComfyUI workflow...");
+    try {
+      const response = await fetch("/api/image/comfy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: generationSettings.endpoint,
+          workflowJson: generationSettings.workflowJson,
+          prompt: generationPrompt,
+          negativePrompt,
+          promptNodeId: generationSettings.promptNodeId,
+          promptInputName: generationSettings.promptInputName,
+          negativePromptNodeId: generationSettings.negativePromptNodeId,
+          negativePromptInputName: generationSettings.negativePromptInputName,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        promptId?: string;
+        error?: string;
+        nodeErrors?: Record<string, unknown>;
+      };
+      if (!response.ok || !data.promptId) {
+        throw new Error(data.error || `ComfyUI queue failed with ${response.status}.`);
+      }
+      setGenerationStatus(`Queued ComfyUI prompt ${data.promptId}. Check ComfyUI history/output for the rendered image.`);
+      setResults([
+        {
+          type: "ComfyUI Generation Queued",
+          content: [
+            `Prompt ID: ${data.promptId}`,
+            `Endpoint: ${generationSettings.endpoint}`,
+            `Prompt: ${generationPrompt}`,
+            Object.keys(data.nodeErrors ?? {}).length ? `Node warnings: ${JSON.stringify(data.nodeErrors)}` : "",
+          ].filter(Boolean).join("\n"),
+        },
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not queue image generation.";
+      setGenerationStatus(message);
+      setResults([{ type: "Generation Error", content: message }]);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleAnalyze = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -187,8 +276,104 @@ export default function MediaStudioPage() {
           <FilmIcon className="w-4 h-4" />
           Video Understanding
         </button>
+        <button
+          onClick={() => {
+            setActiveTab("generate");
+            resetMedia();
+          }}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === "generate"
+              ? "bg-uvb-deep-teal/30 text-uvb-neon-green border border-uvb-neon-green/20"
+              : "text-uvb-text-secondary hover:text-uvb-text-primary hover:bg-uvb-light-gray/30"
+          }`}
+        >
+          <WandSparkles className="w-4 h-4" />
+          Image Generation
+        </button>
       </div>
 
+      {activeTab === "generate" ? (
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="uvb-card space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                ComfyUI Generation
+              </h3>
+              <p className="mt-1 text-xs text-uvb-text-muted">
+                Queue a configured ComfyUI API workflow locally. UVB substitutes prompt text and leaves rendering in ComfyUI.
+              </p>
+            </div>
+            <textarea
+              value={generationPrompt}
+              onChange={(event) => setGenerationPrompt(event.target.value)}
+              className="input-field min-h-28 resize-y"
+              placeholder="Describe the image Sophia should generate..."
+            />
+            <textarea
+              value={negativePrompt}
+              onChange={(event) => setNegativePrompt(event.target.value)}
+              className="input-field min-h-20 resize-y"
+              placeholder="Optional negative prompt"
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <button onClick={queueImageGeneration} disabled={isGenerating} className="btn-primary disabled:opacity-50">
+                {isGenerating ? "Queueing" : "Queue Image"}
+              </button>
+              <button onClick={testComfyConnection} className="btn-ghost">
+                Test ComfyUI
+              </button>
+              <span className="text-xs text-uvb-text-muted">{generationStatus}</span>
+            </div>
+          </div>
+
+          <div className="uvb-card space-y-3">
+            <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+              ComfyUI Workflow Settings
+            </h3>
+            <input
+              value={generationSettings.endpoint}
+              onChange={(event) => updateGenerationSettings({ endpoint: event.target.value })}
+              className="input-field"
+              placeholder="http://127.0.0.1:8188"
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                value={generationSettings.promptNodeId}
+                onChange={(event) => updateGenerationSettings({ promptNodeId: event.target.value })}
+                className="input-field"
+                placeholder="Prompt node id"
+              />
+              <input
+                value={generationSettings.promptInputName}
+                onChange={(event) => updateGenerationSettings({ promptInputName: event.target.value })}
+                className="input-field"
+                placeholder="text"
+              />
+              <input
+                value={generationSettings.negativePromptNodeId}
+                onChange={(event) => updateGenerationSettings({ negativePromptNodeId: event.target.value })}
+                className="input-field"
+                placeholder="Negative node id"
+              />
+              <input
+                value={generationSettings.negativePromptInputName}
+                onChange={(event) => updateGenerationSettings({ negativePromptInputName: event.target.value })}
+                className="input-field"
+                placeholder="text"
+              />
+            </div>
+            <textarea
+              value={generationSettings.workflowJson}
+              onChange={(event) => updateGenerationSettings({ workflowJson: event.target.value })}
+              className="input-field min-h-48 resize-y font-[family-name:var(--font-mono)] text-xs"
+              placeholder="Paste ComfyUI API workflow JSON here"
+            />
+            <button onClick={saveGenerationSettings} className="btn-primary">
+              Save ComfyUI Settings
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Upload area */}
         <div className="uvb-card">
@@ -346,6 +531,7 @@ export default function MediaStudioPage() {
           )}
         </div>
       </div>
+      )}
 
       {/* Tools */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
