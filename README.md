@@ -94,6 +94,9 @@ Required values:
 - `TELEGRAM_BOT_TOKEN`: token from BotFather.
 - `TELEGRAM_ALLOWED_CHAT_ID`: the personal chat ID allowed to control UVB.
 - `UVB_PUBLIC_URL`: usually `http://127.0.0.1:3010` for local polling.
+- `TELEGRAM_API_ORIGIN`: Bot API origin, defaulting to `https://api.telegram.org`; set this to a local Bot API server for large file downloads.
+- `TELEGRAM_FILE_ORIGIN`: file download origin, defaulting to `TELEGRAM_API_ORIGIN`.
+- `TELEGRAM_CLOUD_DOWNLOAD_MAX_MB`: cloud Bot API download ceiling (`20` MB by default).
 
 Optional Telegram voice controls:
 
@@ -109,6 +112,8 @@ Optional Telegram voice controls:
 - `TELEGRAM_VIDEO_FRAME_MAX_WIDTH`: maximum width for sampled video frames (`960` by default).
 
 The worker can route Telegram text, voice/audio, videos, photos, image documents, and text documents into UVB. Photos and image documents are forwarded to `/api/chat` as OpenAI-style `image_url` content, so the active local model still needs vision support for detailed image understanding. Video routing uses local `ffmpeg`/`ffprobe` to extract an audio transcript plus an ordered multi-frame storyboard sampled across the clip. Text-like documents such as `.txt`, `.md`, `.json`, `.csv`, logs, and common code/config files are downloaded and wrapped into the prompt with clear file delimiters.
+
+Telegram's hosted Bot API only allows bot file downloads up to 20 MB. To process larger videos, run a local Telegram Bot API server and point `TELEGRAM_API_ORIGIN`/`TELEGRAM_FILE_ORIGIN` at it; `TELEGRAM_VIDEO_MAX_MB` is UVB's local processing guardrail after Telegram download access is available.
 
 Run only the Telegram worker:
 

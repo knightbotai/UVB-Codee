@@ -26,6 +26,9 @@ await loadEnvFile();
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const allowedChatId = process.env.TELEGRAM_ALLOWED_CHAT_ID;
+const telegramApiOrigin = (process.env.TELEGRAM_API_ORIGIN ?? "https://api.telegram.org").replace(/\/+$/, "");
+const telegramFileOrigin = (process.env.TELEGRAM_FILE_ORIGIN ?? telegramApiOrigin).replace(/\/+$/, "");
+const telegramCloudDownloadMaxMb = Number.parseInt(process.env.TELEGRAM_CLOUD_DOWNLOAD_MAX_MB ?? "20", 10);
 const uvbUrl = (process.env.UVB_PUBLIC_URL ?? "http://127.0.0.1:3010").replace(/\/+$/, "");
 const telegramSendTextReplies = (process.env.TELEGRAM_SEND_TEXT_REPLIES ?? "true").toLowerCase() !== "false";
 const telegramSendTtsReplies = (process.env.TELEGRAM_SEND_TTS_REPLIES ?? "true").toLowerCase() !== "false";
@@ -40,8 +43,8 @@ const telegramTtsChunkChars = Number.parseInt(
   10
 );
 const telegramTtsMaxParts = Number.parseInt(process.env.TELEGRAM_TTS_MAX_PARTS ?? "6", 10);
-const apiBase = token ? `https://api.telegram.org/bot${token}` : "";
-const fileBase = token ? `https://api.telegram.org/file/bot${token}` : "";
+const apiBase = token ? `${telegramApiOrigin}/bot${token}` : "";
+const fileBase = token ? `${telegramFileOrigin}/file/bot${token}` : "";
 const histories = new Map();
 
 if (!token) {
@@ -141,12 +144,55 @@ async function sendAction(chatId, action) {
   return telegram("sendChatAction", { chat_id: chatId, action }).catch(() => undefined);
 }
 
-async function getFile(fileId) {
-  return telegram("getFile", { file_id: fileId });
+function isTelegramCloudApi() {
+  return telegramApiOrigin === "https://api.telegram.org";
 }
 
-async function downloadTelegramFile(fileId) {
-  const file = await getFile(fileId);
+function getAttachmentSizeMb(attachment) {
+  const fileSize = Number(attachment?.file_size || 0);
+  return fileSize > 0 ? fileSize / 1024 / 1024 : 0;
+}
+
+function assertTelegramDownloadAllowed(attachment) {
+  const fileSizeMb = getAttachmentSizeMb(attachment);
+  const cloudMaxMb = Number.isFinite(telegramCloudDownloadMaxMb) && telegramCloudDownloadMaxMb > 0
+    ? telegramCloudDownloadMaxMb
+    : 20;
+  if (isTelegramCloudApi() && fileSizeMb > cloudMaxMb) {
+    throw new Error(
+      `Telegram cloud Bot API can only download files up to ${cloudMaxMb} MB. This file is ${fileSizeMb.toFixed(1)} MB. To process larger Telegram videos, run a local Telegram Bot API server and set TELEGRAM_API_ORIGIN/TELEGRAM_FILE_ORIGIN to it, or send a compressed clip under ${cloudMaxMb} MB.`
+    );
+  }
+}
+
+async function getFile(fileId, attachment) {
+  assertTelegramDownloadAllowed(attachment);
+  try {
+    return await telegram("getFile", { file_id: fileId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Telegram getFile error.";
+    if (/file is too big/i.test(message) && isTelegramCloudApi()) {
+      const fileSizeMb = getAttachmentSizeMb(attachment);
+      const sizeText = fileSizeMb ? ` This file is ${fileSizeMb.toFixed(1)} MB.` : "";
+      throw new Error(
+        `Telegram cloud Bot API refused the download because the file is too big.${sizeText} Use a local Telegram Bot API server for large videos, or send a compressed clip under ${telegramCloudDownloadMaxMb} MB.`
+      );
+    }
+    throw error;
+  }
+}
+
+async function downloadTelegramFile(fileId, attachment) {
+  const file = await getFile(fileId, attachment);
+  if (file.file_path && path.isAbsolute(file.file_path) && existsSync(file.file_path)) {
+    const bytes = await readFile(file.file_path);
+    return {
+      blob: new Blob([bytes], { type: attachment?.mime_type || "application/octet-stream" }),
+      name: path.basename(file.file_path),
+      path: file.file_path,
+    };
+  }
+
   const response = await fetch(`${fileBase}/${file.file_path}`);
   if (!response.ok) throw new Error(`Could not download Telegram file: ${response.status}`);
   return {
@@ -357,7 +403,7 @@ async function transcribeTelegramVoice(message) {
   if (!voice?.file_id) return "";
 
   await sendAction(message.chat.id, "typing");
-  const file = await downloadTelegramFile(voice.file_id);
+  const file = await downloadTelegramFile(voice.file_id, voice);
   return transcribeAudioBlob(file.blob, file.name || "telegram-voice.ogg");
 }
 
@@ -375,7 +421,7 @@ async function buildTelegramImageContent(message) {
   if (!fileId) return null;
 
   await sendAction(message.chat.id, "upload_photo");
-  const file = await downloadTelegramFile(fileId);
+  const file = await downloadTelegramFile(fileId, largest || document);
   const dataUrl = await blobToDataUrl(
     file.blob.type ? file.blob : new Blob([await file.blob.arrayBuffer()], { type: document?.mime_type || "image/jpeg" })
   );
@@ -391,7 +437,7 @@ async function readTelegramTextDocument(message) {
   if (!document?.file_id || !isTextDocument(document)) return "";
 
   await sendAction(message.chat.id, "typing");
-  const file = await downloadTelegramFile(document.file_id);
+  const file = await downloadTelegramFile(document.file_id, document);
   const rawText = await file.blob.text();
   const maxChars = Number.isFinite(telegramDocumentMaxChars) && telegramDocumentMaxChars > 1000
     ? telegramDocumentMaxChars
@@ -429,7 +475,7 @@ async function buildTelegramVideoContent(message) {
 
   assertVideoSizeAllowed(video);
   await sendAction(message.chat.id, "typing");
-  const file = await downloadTelegramFile(video.file_id);
+  const file = await downloadTelegramFile(video.file_id, video);
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "uvb-telegram-video-"));
   const inputExtension = path.extname(file.name || file.path || "") || ".mp4";
   const inputPath = path.join(tempDir, `input${inputExtension}`);
