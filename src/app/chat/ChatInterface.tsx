@@ -101,6 +101,21 @@ type ChatModelMessage = {
   content: string | ChatModelContentPart[];
 };
 
+type TelegramLogThread = {
+  id: string;
+  title: string;
+  chatId: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: Array<{
+    id: string;
+    role: "user" | "assistant";
+    content: string;
+    timestamp: number;
+    type: ChatMessage["type"];
+  }>;
+};
+
 type PipecatClientLike = {
   connect: (params?: unknown) => Promise<unknown>;
   disconnect: () => Promise<void>;
@@ -665,6 +680,69 @@ export default function ChatInterface() {
       window.removeEventListener("storage", refreshIdentitySettings);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncTelegramThreads = async () => {
+      try {
+        const response = await fetch("/api/telegram/log", { cache: "no-store" });
+        const data = (await response.json()) as { threads?: TelegramLogThread[] };
+        if (cancelled || !Array.isArray(data.threads)) return;
+
+        const currentThreads = useAppStore.getState().threads;
+        for (const telegramThread of data.threads) {
+          const existingThread = currentThreads.find((thread) => thread.id === telegramThread.id);
+          const context = `source:telegram; chatId:${telegramThread.chatId}`;
+          if (!existingThread) {
+            addThread({
+              id: telegramThread.id,
+              title: telegramThread.title,
+              messages: telegramThread.messages.map((message) => ({
+                id: message.id,
+                role: message.role,
+                content: message.content,
+                timestamp: message.timestamp,
+                type: message.type,
+                branch: "telegram",
+              })),
+              createdAt: telegramThread.createdAt,
+              updatedAt: telegramThread.updatedAt,
+              context,
+            });
+            continue;
+          }
+
+          if (existingThread.title !== telegramThread.title || existingThread.context !== context) {
+            updateThread(existingThread.id, { title: telegramThread.title, context });
+          }
+
+          const existingMessageIds = new Set(existingThread.messages.map((message) => message.id));
+          for (const message of telegramThread.messages) {
+            if (!existingMessageIds.has(message.id)) {
+              addMessage(existingThread.id, {
+                id: message.id,
+                role: message.role,
+                content: message.content,
+                timestamp: message.timestamp,
+                type: message.type,
+                branch: "telegram",
+              });
+            }
+          }
+        }
+      } catch {
+        // The Telegram bridge is optional; normal local chat should stay quiet if it is absent.
+      }
+    };
+
+    void syncTelegramThreads();
+    const interval = window.setInterval(syncTelegramThreads, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [addMessage, addThread, updateThread]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -2195,7 +2273,9 @@ export default function ChatInterface() {
                 }`}
                 whileHover={{ x: 2 }}
               >
-                {editingThreadId === thread.id ? (
+                {(() => {
+                  const isTelegramThread = thread.context.includes("source:telegram");
+                  return editingThreadId === thread.id ? (
                   <div className="flex items-center gap-1 p-2">
                     <input
                       value={editingThreadTitle}
@@ -2236,9 +2316,16 @@ export default function ChatInterface() {
                         <Sparkles className="w-3 h-3 flex-shrink-0 text-uvb-text-muted" />
                         <span className="truncate">{thread.title}</span>
                       </div>
-                      <span className="text-[10px] text-uvb-text-muted block mt-0.5">
-                        {timestampToDate(thread.updatedAt).toLocaleDateString()}
-                      </span>
+                      <div className="mt-0.5 flex items-center gap-2">
+                        {isTelegramThread && (
+                          <span className="rounded-full border border-uvb-steel-blue/30 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-uvb-steel-blue">
+                            Telegram
+                          </span>
+                        )}
+                        <span className="text-[10px] text-uvb-text-muted">
+                          {timestampToDate(thread.updatedAt).toLocaleDateString()}
+                        </span>
+                      </div>
                     </button>
                     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                       <button
@@ -2265,7 +2352,8 @@ export default function ChatInterface() {
                       </button>
                     </div>
                   </>
-                )}
+                );
+                })()}
               </motion.div>
             ))}
             {threads.length === 0 && (

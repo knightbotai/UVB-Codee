@@ -56,6 +56,38 @@ function isAllowed(chatId) {
   return !allowedChatId || String(chatId) === String(allowedChatId);
 }
 
+function getTelegramChatTitle(chat) {
+  return (
+    [chat?.first_name, chat?.last_name].filter(Boolean).join(" ").trim() ||
+    chat?.username ||
+    chat?.title ||
+    String(chat?.id || "Telegram")
+  );
+}
+
+async function logTelegramChatTurn(message, userText, assistantText, messageType = "text") {
+  try {
+    await fetch(`${uvbUrl}/api/telegram/log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chatId: String(message.chat.id),
+        chatTitle: getTelegramChatTitle(message.chat),
+        telegramMessageId: message.message_id,
+        userText,
+        assistantText,
+        messageType,
+        timestamp: (message.date ? message.date * 1000 : Date.now()),
+      }),
+    });
+  } catch (error) {
+    console.error(
+      "[uvb-telegram] Could not write local Telegram chat log:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
 async function telegram(method, payload) {
   const response = await fetch(`${apiBase}/${method}`, {
     method: "POST",
@@ -666,28 +698,33 @@ async function handleMessage(message) {
   let text = message.text?.trim() ?? "";
   let content = null;
   let logText = text;
+  let messageType = "text";
 
   try {
     if (!text && (message.voice || message.audio)) {
       await sendMessage(chatId, "Voice received. Transcribing locally...");
       text = await transcribeTelegramVoice(message);
       logText = text;
+      messageType = "voice";
     }
 
     if (!text && getVideoAttachment(message)) {
       await sendMessage(chatId, "Video received. Extracting audio and a reference frame locally...");
       content = await buildTelegramVideoContent(message);
       logText = message.caption?.trim() || "[Telegram video]";
+      messageType = "video";
     }
 
     if (!text && message.document && isTextDocument(message.document)) {
       text = await readTelegramTextDocument(message);
       logText = message.caption?.trim() || `[Telegram text document: ${message.document.file_name || "document"}]`;
+      messageType = "text";
     }
 
     if (!text && (message.photo || message.document)) {
       content = await buildTelegramImageContent(message);
       logText = message.caption?.trim() || "[Telegram image]";
+      messageType = "image";
     }
 
     if (!text && !content) {
@@ -698,6 +735,7 @@ async function handleMessage(message) {
     await sendAction(chatId, "typing");
     await sendMessage(chatId, "Working on it through UVB...");
     const answer = await askKnightBot(chatId, content || text, logText);
+    await logTelegramChatTurn(message, logText, answer, messageType);
     if (telegramSendTextReplies) {
       await sendLongMessage(chatId, answer);
     }
