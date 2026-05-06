@@ -283,6 +283,7 @@ export const VOICE_MODEL_CATALOG: VoiceModelCatalogItem[] = [
     footprint: "Python streaming voice pipeline",
     strengths: ["Streaming STT/LLM/TTS pipeline", "Barge-in architecture fit", "Subagents and Flows path"],
     endpointHint: "services/voice-agent/pipecat_agent.py",
+    localPaths: ["services\\voice-agent\\pipecat_agent.py", ".venv-pipecat"],
     notes: "Keep investing here: it maps cleanly to Sophia brain/tool/memory subagents while preserving local STT/TTS provider swaps.",
   },
   {

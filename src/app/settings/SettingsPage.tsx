@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   UserCircleIcon,
@@ -66,6 +66,24 @@ const MODEL_PRESETS = [
   },
 ];
 
+interface VoiceStackItem {
+  id: string;
+  kind: "stt" | "tts" | "framework";
+  name: string;
+  role: string;
+  status: "wired" | "candidate" | "future";
+  installed: boolean;
+  sidecarPath?: string;
+  repo?: { repo: string; directory: string; priority: number };
+  local?: Array<{ path: string; exists: boolean; type?: string; updatedAt?: string; error?: string }>;
+}
+
+interface VoiceStackResponse {
+  sidecarRoot: string;
+  summary: { total: number; installed: number; wired: number; candidates: number };
+  items: VoiceStackItem[];
+}
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
   const [modelSettings, setModelSettings] = useState<ModelSettings>(() => loadModelSettings());
@@ -86,9 +104,35 @@ export default function SettingsPage() {
     loadAgentToolSettings()
   );
   const [agentToolStatus, setAgentToolStatus] = useState("");
+  const [voiceStack, setVoiceStack] = useState<VoiceStackResponse | null>(null);
+  const [voiceStackStatus, setVoiceStackStatus] = useState("Loading voice stack...");
   const importInputRef = useRef<HTMLInputElement>(null);
   const userPortraitInputRef = useRef<HTMLInputElement>(null);
   const assistantPortraitInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadVoiceStack = async () => {
+      try {
+        const response = await fetch("/api/voice/stack", { cache: "no-store" });
+        const data = (await response.json()) as VoiceStackResponse;
+        if (cancelled) return;
+        setVoiceStack(data);
+        setVoiceStackStatus(
+          `${data.summary.installed}/${data.summary.total} voice stack entries have local assets or sidecar code.`
+        );
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : "Could not load voice stack.";
+        setVoiceStackStatus(message);
+      }
+    };
+
+    void loadVoiceStack();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const tabs = [
     { id: "profile", label: "Profile", icon: UserCircleIcon },
@@ -865,6 +909,82 @@ export default function SettingsPage() {
                         </span>
                       )}
                     </div>
+                  </div>
+                </div>
+
+                <div className="uvb-card">
+                  <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                        Voice Stack Infrastructure
+                      </h3>
+                      <p className="mt-1 text-xs text-uvb-text-muted">{voiceStackStatus}</p>
+                    </div>
+                    <span className="rounded-full border border-uvb-border/30 px-3 py-1 text-[10px] uppercase tracking-wider text-uvb-text-muted">
+                      {voiceStack?.sidecarRoot ?? "Z:\\Models\\_uvb-sidecars"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    {(voiceStack?.items ?? [])
+                      .filter((item) => item.status !== "future")
+                      .sort((a, b) => {
+                        const priorityA = a.repo?.priority ?? 9;
+                        const priorityB = b.repo?.priority ?? 9;
+                        return priorityA - priorityB || Number(b.installed) - Number(a.installed);
+                      })
+                      .slice(0, 12)
+                      .map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-lg border border-uvb-border/25 bg-uvb-dark-gray/40 p-3"
+                        >
+                          <div className="mb-2 flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-uvb-text-primary">
+                                {item.name}
+                              </p>
+                              <p className="mt-0.5 text-xs text-uvb-text-muted">{item.role}</p>
+                            </div>
+                            <span
+                              className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] uppercase tracking-wider ${
+                                item.installed
+                                  ? "border-uvb-neon-green/30 text-uvb-neon-green"
+                                  : "border-uvb-border/30 text-uvb-text-muted"
+                              }`}
+                            >
+                              {item.installed ? "local" : "staged"}
+                            </span>
+                          </div>
+                          <div className="space-y-1 text-[11px] text-uvb-text-muted">
+                            <p>
+                              <span className="text-uvb-text-secondary">Kind:</span> {item.kind} / {item.status}
+                            </p>
+                            {item.repo && (
+                              <p className="break-all">
+                                <span className="text-uvb-text-secondary">Repo:</span> {item.repo.repo}
+                              </p>
+                            )}
+                            {item.sidecarPath && (
+                              <p className="break-all">
+                                <span className="text-uvb-text-secondary">Sidecar:</span> {item.sidecarPath}
+                              </p>
+                            )}
+                            {item.local?.find((entry) => entry.exists) && (
+                              <p className="break-all">
+                                <span className="text-uvb-text-secondary">Found:</span>{" "}
+                                {item.local.find((entry) => entry.exists)?.path}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                  <div className="mt-4 rounded-lg border border-uvb-steel-blue/20 bg-uvb-steel-blue/10 p-3">
+                    <p className="text-xs text-uvb-text-secondary">
+                      Bootstrap command: <span className="font-[family-name:var(--font-mono)] text-uvb-text-primary">
+                        bun run voice:bootstrap
+                      </span>
+                    </p>
                   </div>
                 </div>
               </motion.div>
