@@ -32,7 +32,7 @@ const telegramSendTtsReplies = (process.env.TELEGRAM_SEND_TTS_REPLIES ?? "true")
 const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_VOICE || "af_nova";
 const telegramTextChunkChars = Number.parseInt(process.env.TELEGRAM_TEXT_CHUNK_CHARS ?? "3600", 10);
 const telegramDocumentMaxChars = Number.parseInt(process.env.TELEGRAM_DOCUMENT_MAX_CHARS ?? "120000", 10);
-const telegramVideoMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_MAX_MB ?? "80", 10);
+const telegramVideoMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_MAX_MB ?? "500", 10);
 const telegramVideoFrameCount = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_COUNT ?? "6", 10);
 const telegramVideoFrameMaxWidth = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_MAX_WIDTH ?? "960", 10);
 const telegramTtsChunkChars = Number.parseInt(
@@ -225,7 +225,7 @@ function getVideoAttachment(message) {
 }
 
 function assertVideoSizeAllowed(video) {
-  const maxBytes = (Number.isFinite(telegramVideoMaxMb) && telegramVideoMaxMb > 1 ? telegramVideoMaxMb : 80) * 1024 * 1024;
+  const maxBytes = (Number.isFinite(telegramVideoMaxMb) && telegramVideoMaxMb > 1 ? telegramVideoMaxMb : 500) * 1024 * 1024;
   const fileSize = Number(video?.file_size || 0);
   if (fileSize > maxBytes) {
     throw new Error(`Telegram video is ${(fileSize / 1024 / 1024).toFixed(1)} MB, above the ${telegramVideoMaxMb} MB local routing limit.`);

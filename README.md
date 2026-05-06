@@ -104,7 +104,7 @@ Optional Telegram voice controls:
 - `TELEGRAM_TTS_CHUNK_CHARS`: approximate text size per audio part for long replies (`4200` by default, roughly a three-minute target).
 - `TELEGRAM_TTS_MAX_PARTS`: maximum number of sequential audio parts per reply (`6` by default).
 - `TELEGRAM_DOCUMENT_MAX_CHARS`: maximum text-document characters routed into UVB (`120000` by default).
-- `TELEGRAM_VIDEO_MAX_MB`: maximum Telegram video size routed locally (`80` MB by default).
+- `TELEGRAM_VIDEO_MAX_MB`: maximum Telegram video size routed locally (`500` MB by default).
 - `TELEGRAM_VIDEO_FRAME_COUNT`: number of sampled frames to send as a video storyboard (`6` by default, capped at `12`).
 - `TELEGRAM_VIDEO_FRAME_MAX_WIDTH`: maximum width for sampled video frames (`960` by default).
 
