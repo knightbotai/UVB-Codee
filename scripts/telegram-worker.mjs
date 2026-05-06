@@ -29,6 +29,7 @@ const telegramSendTextReplies = (process.env.TELEGRAM_SEND_TEXT_REPLIES ?? "true
 const telegramSendTtsReplies = (process.env.TELEGRAM_SEND_TTS_REPLIES ?? "true").toLowerCase() !== "false";
 const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_VOICE || "af_nova";
 const telegramTextChunkChars = Number.parseInt(process.env.TELEGRAM_TEXT_CHUNK_CHARS ?? "3600", 10);
+const telegramDocumentMaxChars = Number.parseInt(process.env.TELEGRAM_DOCUMENT_MAX_CHARS ?? "120000", 10);
 const telegramTtsChunkChars = Number.parseInt(
   process.env.TELEGRAM_TTS_CHUNK_CHARS ?? process.env.TELEGRAM_TTS_MAX_CHARS ?? "4200",
   10
@@ -156,6 +157,50 @@ async function blobToDataUrl(blob) {
   return `data:${mediaType};base64,${buffer.toString("base64")}`;
 }
 
+function isTextDocument(document) {
+  const mimeType = String(document?.mime_type || "").toLowerCase();
+  const name = String(document?.file_name || "").toLowerCase();
+  const extension = path.extname(name);
+  const textExtensions = new Set([
+    ".txt",
+    ".md",
+    ".markdown",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".log",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".toml",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".py",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".sh",
+    ".css",
+    ".html",
+    ".sql",
+  ]);
+
+  return (
+    mimeType.startsWith("text/") ||
+    mimeType === "application/json" ||
+    mimeType === "application/x-ndjson" ||
+    mimeType === "application/xml" ||
+    mimeType === "application/yaml" ||
+    textExtensions.has(extension)
+  );
+}
+
 async function transcribeTelegramVoice(message) {
   const voice = message.voice ?? message.audio;
   if (!voice?.file_id) return "";
@@ -198,6 +243,30 @@ async function buildTelegramImageContent(message) {
     { type: "text", text: prompt },
     { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
   ];
+}
+
+async function readTelegramTextDocument(message) {
+  const document = message.document;
+  if (!document?.file_id || !isTextDocument(document)) return "";
+
+  await sendAction(message.chat.id, "typing");
+  const file = await downloadTelegramFile(document.file_id);
+  const rawText = await file.blob.text();
+  const maxChars = Number.isFinite(telegramDocumentMaxChars) && telegramDocumentMaxChars > 1000
+    ? telegramDocumentMaxChars
+    : 120000;
+  const truncated = rawText.length > maxChars;
+  const content = truncated ? rawText.slice(0, maxChars) : rawText;
+  const caption = message.caption?.trim();
+  const fileName = document.file_name || file.name || "telegram-document.txt";
+  const intro = caption
+    ? `Telegram text document "${fileName}" was sent with this instruction: ${caption}`
+    : `Telegram text document "${fileName}" was sent. Please read it and respond helpfully.`;
+  const ending = truncated
+    ? `\n\n[Document was truncated at ${maxChars} characters before routing to UVB.]`
+    : "";
+
+  return `${intro}\n\n--- BEGIN ${fileName} ---\n${content}\n--- END ${fileName} ---${ending}`;
 }
 
 function splitTextForSpeech(text) {
@@ -346,13 +415,18 @@ async function handleMessage(message) {
       logText = text;
     }
 
+    if (!text && message.document && isTextDocument(message.document)) {
+      text = await readTelegramTextDocument(message);
+      logText = message.caption?.trim() || `[Telegram text document: ${message.document.file_name || "document"}]`;
+    }
+
     if (!text && (message.photo || message.document)) {
       content = await buildTelegramImageContent(message);
       logText = message.caption?.trim() || "[Telegram image]";
     }
 
     if (!text && !content) {
-      await sendMessage(chatId, "I received the message, but there was no text, voice, audio, or image I can route yet.");
+      await sendMessage(chatId, "I received the message, but there was no text, voice, audio, image, or text document I can route yet.");
       return;
     }
 
