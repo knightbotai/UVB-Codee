@@ -19,7 +19,9 @@
     "@pipecat-ai/small-webrtc-transport": "^1.10.0",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.7.0",
+    "mammoth": "^1.12.0",
     "next": "^16.1.3",
+    "pdf-parse": "^2.4.5",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "zustand": "^5.0.12"

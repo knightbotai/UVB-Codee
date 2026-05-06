@@ -85,6 +85,7 @@ const TEXT_DOCUMENT_EXTENSIONS = new Set([
   ".sh",
   ".sql",
 ]);
+const EXTRACTABLE_DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx"]);
 
 type ChatModelContentPart =
   | { type: "text"; text: string }
@@ -205,6 +206,15 @@ function isTextDocument(file: File) {
   return TEXT_DOCUMENT_EXTENSIONS.has(getFileExtension(file.name));
 }
 
+function isExtractableDocument(file: File) {
+  const extension = getFileExtension(file.name);
+  return (
+    file.type === "application/pdf" ||
+    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    EXTRACTABLE_DOCUMENT_EXTENSIONS.has(extension)
+  );
+}
+
 async function readTextDocument(file: File) {
   if (file.size > MAX_TEXT_DOCUMENT_BYTES) {
     throw new Error(`${file.name} is over ${Math.round(MAX_TEXT_DOCUMENT_BYTES / 1024)} KB.`);
@@ -223,6 +233,36 @@ async function readTextDocument(file: File) {
     "",
     normalizedText,
     `--- END ATTACHED TEXT DOCUMENT: ${file.name} ---`,
+  ].join("\n");
+}
+
+async function extractBinaryDocument(file: File) {
+  const payload = new FormData();
+  payload.append("file", file, file.name);
+
+  const response = await fetch("/api/documents/extract", {
+    method: "POST",
+    body: payload,
+  });
+  const data = (await response.json().catch(() => ({}))) as {
+    fileName?: string;
+    mediaType?: string;
+    size?: number;
+    text?: string;
+    error?: string;
+  };
+
+  if (!response.ok || !data.text) {
+    throw new Error(data.error || `Document extraction failed with ${response.status}.`);
+  }
+
+  return [
+    `--- BEGIN EXTRACTED DOCUMENT: ${data.fileName || file.name} ---`,
+    `Media type: ${data.mediaType || file.type || "application/octet-stream"}`,
+    `Size: ${data.size ?? file.size} bytes`,
+    "",
+    data.text,
+    `--- END EXTRACTED DOCUMENT: ${data.fileName || file.name} ---`,
   ].join("\n");
 }
 
@@ -1986,7 +2026,12 @@ export default function ChatInterface() {
     if (!otherFiles.length) return;
 
     const textFiles = otherFiles.filter(isTextDocument);
-    const unsupportedFiles = otherFiles.filter((file) => !isTextDocument(file));
+    const extractableDocuments = otherFiles.filter(
+      (file) => !isTextDocument(file) && isExtractableDocument(file)
+    );
+    const unsupportedFiles = otherFiles.filter(
+      (file) => !isTextDocument(file) && !isExtractableDocument(file)
+    );
     const documentBlocks: string[] = [];
     const skippedDocuments: string[] = [];
 
@@ -1995,6 +2040,16 @@ export default function ChatInterface() {
         documentBlocks.push(await readTextDocument(file));
       } catch (error) {
         const message = error instanceof Error ? error.message : "could not be read";
+        skippedDocuments.push(`${file.name}: ${message}`);
+      }
+    }
+
+    for (const file of extractableDocuments) {
+      try {
+        setActivityStatus(`Extracting ${file.name}...`);
+        documentBlocks.push(await extractBinaryDocument(file));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "could not be extracted";
         skippedDocuments.push(`${file.name}: ${message}`);
       }
     }
@@ -2018,11 +2073,11 @@ export default function ChatInterface() {
     }
 
     if (documentBlocks.length) {
-      setActivityStatus(`Attached ${documentBlocks.length} text document(s). Send when ready.`);
+      setActivityStatus(`Attached ${documentBlocks.length} document(s). Send when ready.`);
     } else if (skippedDocuments.length) {
       setActivityStatus("Document attach skipped: size or read limit hit.");
     } else {
-      setActivityStatus("File noted. Binary/PDF document extraction is still next.");
+      setActivityStatus("File noted. This file type is not routed yet.");
     }
   };
 
