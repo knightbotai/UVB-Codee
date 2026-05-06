@@ -33,6 +33,8 @@ const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_V
 const telegramTextChunkChars = Number.parseInt(process.env.TELEGRAM_TEXT_CHUNK_CHARS ?? "3600", 10);
 const telegramDocumentMaxChars = Number.parseInt(process.env.TELEGRAM_DOCUMENT_MAX_CHARS ?? "120000", 10);
 const telegramVideoMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_MAX_MB ?? "80", 10);
+const telegramVideoFrameCount = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_COUNT ?? "6", 10);
+const telegramVideoFrameMaxWidth = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_MAX_WIDTH ?? "960", 10);
 const telegramTtsChunkChars = Number.parseInt(
   process.env.TELEGRAM_TTS_CHUNK_CHARS ?? process.env.TELEGRAM_TTS_MAX_CHARS ?? "4200",
   10
@@ -248,6 +250,108 @@ function runFfmpeg(args) {
   });
 }
 
+function runFfprobe(args) {
+  return new Promise((resolve, reject) => {
+    const ffprobe = spawn("ffprobe", args, { windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    ffprobe.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    ffprobe.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    ffprobe.on("error", reject);
+    ffprobe.on("close", (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+        return;
+      }
+      reject(new Error(`ffprobe exited with ${code}: ${stderr.slice(-800)}`));
+    });
+  });
+}
+
+async function probeVideoDuration(inputPath, fallbackDuration) {
+  if (Number.isFinite(fallbackDuration) && fallbackDuration > 0) return fallbackDuration;
+  try {
+    const output = await runFfprobe([
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      inputPath,
+    ]);
+    const duration = Number.parseFloat(output);
+    return Number.isFinite(duration) && duration > 0 ? duration : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function getVideoSampleTimes(durationSeconds) {
+  const frameCount = Number.isFinite(telegramVideoFrameCount)
+    ? Math.min(Math.max(telegramVideoFrameCount, 1), 12)
+    : 6;
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return [1];
+
+  const usableCount = Math.min(frameCount, Math.max(1, Math.floor(durationSeconds)));
+  if (usableCount === 1) return [Math.max(0, Math.min(durationSeconds / 2, durationSeconds - 0.1))];
+
+  return Array.from({ length: usableCount }, (_, index) => {
+    const time = ((index + 1) * durationSeconds) / (usableCount + 1);
+    return Math.max(0, Math.min(time, durationSeconds - 0.1));
+  });
+}
+
+function formatTimestamp(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "unknown";
+  const minutes = Math.floor(seconds / 60);
+  const wholeSeconds = Math.floor(seconds % 60);
+  return `${minutes}:${String(wholeSeconds).padStart(2, "0")}`;
+}
+
+async function extractVideoFrames(inputPath, tempDir, durationSeconds) {
+  const maxWidth = Number.isFinite(telegramVideoFrameMaxWidth) && telegramVideoFrameMaxWidth >= 320
+    ? telegramVideoFrameMaxWidth
+    : 960;
+  const times = getVideoSampleTimes(durationSeconds);
+  const frames = [];
+
+  for (const [index, time] of times.entries()) {
+    const framePath = path.join(tempDir, `frame-${index + 1}.jpg`);
+    try {
+      await runFfmpeg([
+        "-y",
+        "-ss",
+        String(time),
+        "-i",
+        inputPath,
+        "-frames:v",
+        "1",
+        "-vf",
+        `scale=${maxWidth}:-2:force_original_aspect_ratio=decrease`,
+        "-q:v",
+        "5",
+        framePath,
+      ]);
+      const frameBytes = await readFile(framePath);
+      frames.push({
+        index: index + 1,
+        timestamp: formatTimestamp(time),
+        dataUrl: `data:image/jpeg;base64,${frameBytes.toString("base64")}`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown frame extraction error";
+      console.error(`[uvb-telegram] Could not extract video frame ${index + 1}: ${message}`);
+    }
+  }
+
+  return frames;
+}
+
 async function transcribeTelegramVoice(message) {
   const voice = message.voice ?? message.audio;
   if (!voice?.file_id) return "";
@@ -330,10 +434,10 @@ async function buildTelegramVideoContent(message) {
   const inputExtension = path.extname(file.name || file.path || "") || ".mp4";
   const inputPath = path.join(tempDir, `input${inputExtension}`);
   const audioPath = path.join(tempDir, "audio.mp3");
-  const framePath = path.join(tempDir, "frame.jpg");
 
   try {
     await writeFile(inputPath, Buffer.from(await file.blob.arrayBuffer()));
+    const durationSeconds = await probeVideoDuration(inputPath, Number(video.duration || 0));
     await runFfmpeg(["-y", "-i", inputPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "96k", audioPath]);
 
     let transcript = "";
@@ -345,33 +449,33 @@ async function buildTelegramVideoContent(message) {
       transcript = `[Video audio transcription failed: ${messageText}]`;
     }
 
-    let frameDataUrl = "";
-    try {
-      await runFfmpeg(["-y", "-ss", "1", "-i", inputPath, "-frames:v", "1", "-q:v", "4", framePath]);
-      const frameBytes = await readFile(framePath);
-      frameDataUrl = `data:image/jpeg;base64,${frameBytes.toString("base64")}`;
-    } catch {
-      frameDataUrl = "";
-    }
+    const frames = await extractVideoFrames(inputPath, tempDir, durationSeconds);
 
     const caption = message.caption?.trim();
     const videoName = message.document?.file_name || file.name || "telegram-video";
+    const storyboard = frames.length
+      ? `Sampled visual storyboard: ${frames.map((frame) => `Frame ${frame.index} at ${frame.timestamp}`).join(", ")}.`
+      : "No visual frames could be extracted.";
     const metadata = [
       `Telegram video "${videoName}" was sent.`,
       caption ? `Sender instruction/caption: ${caption}` : "",
-      video.duration ? `Duration: ${video.duration} seconds.` : "",
+      durationSeconds ? `Duration: ${durationSeconds.toFixed(1)} seconds.` : "",
       video.width && video.height ? `Resolution: ${video.width}x${video.height}.` : "",
+      storyboard,
       transcript ? `Audio transcript:\n${transcript}` : "No audio transcript was available.",
     ]
       .filter(Boolean)
       .join("\n\n");
-    const prompt = `${metadata}\n\nPlease analyze the available video context. If a frame is attached, use it as a visual reference; if only transcript is available, be clear about that limitation.`;
+    const prompt = `${metadata}\n\nPlease analyze the essence of this video using the ordered sampled frames as a timeline and the audio transcript as narrative context. Call out visual progression, notable objects/actions, mood, scene changes, and anything uncertain.`;
 
-    if (!frameDataUrl) return prompt;
+    if (!frames.length) return prompt;
 
     return [
       { type: "text", text: prompt },
-      { type: "image_url", image_url: { url: frameDataUrl, detail: "auto" } },
+      ...frames.flatMap((frame) => [
+        { type: "text", text: `Reference frame ${frame.index} at ${frame.timestamp}.` },
+        { type: "image_url", image_url: { url: frame.dataUrl, detail: "auto" } },
+      ]),
     ];
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
