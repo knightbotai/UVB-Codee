@@ -29,7 +29,7 @@ const telegramSendTextReplies = (process.env.TELEGRAM_SEND_TEXT_REPLIES ?? "true
 const telegramSendTtsReplies = (process.env.TELEGRAM_SEND_TTS_REPLIES ?? "true").toLowerCase() !== "false";
 const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_VOICE || "af_nova";
 const telegramTtsChunkChars = Number.parseInt(
-  process.env.TELEGRAM_TTS_CHUNK_CHARS ?? process.env.TELEGRAM_TTS_MAX_CHARS ?? "2200",
+  process.env.TELEGRAM_TTS_CHUNK_CHARS ?? process.env.TELEGRAM_TTS_MAX_CHARS ?? "4200",
   10
 );
 const telegramTtsMaxParts = Number.parseInt(process.env.TELEGRAM_TTS_MAX_PARTS ?? "6", 10);
@@ -154,7 +154,7 @@ function splitTextForSpeech(text) {
 
   const chunkChars = Number.isFinite(telegramTtsChunkChars) && telegramTtsChunkChars > 400
     ? telegramTtsChunkChars
-    : 2200;
+    : 4200;
   const maxParts = Number.isFinite(telegramTtsMaxParts) && telegramTtsMaxParts > 0
     ? telegramTtsMaxParts
     : 6;

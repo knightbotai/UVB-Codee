@@ -100,7 +100,7 @@ Optional Telegram voice controls:
 - `TELEGRAM_SEND_TEXT_REPLIES`: keep text replies on while also sending audio (`true` by default).
 - `TELEGRAM_SEND_TTS_REPLIES`: send Kokoro-generated audio replies back to Telegram (`true` by default).
 - `TELEGRAM_TTS_VOICE`: Kokoro voice used for Telegram replies, defaulting to `UVB_TTS_VOICE` or `af_nova`.
-- `TELEGRAM_TTS_CHUNK_CHARS`: approximate text size per audio part for long replies (`2200` by default).
+- `TELEGRAM_TTS_CHUNK_CHARS`: approximate text size per audio part for long replies (`4200` by default, roughly a three-minute target).
 - `TELEGRAM_TTS_MAX_PARTS`: maximum number of sequential audio parts per reply (`6` by default).
 
 The worker can route Telegram text, voice/audio, photos, and image documents into UVB. Photos and image documents are forwarded to `/api/chat` as OpenAI-style `image_url` content, so the active local model still needs vision support for detailed image understanding.
