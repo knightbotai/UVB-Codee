@@ -26,11 +26,14 @@ interface StoryboardFrame {
   dataUrl: string;
 }
 
-const IMAGE_CAPTION_SAMPLE =
-  "A futuristic control room with holographic displays showing real-time data streams. Multiple workstations are arranged in a circular pattern, each with glowing cyan interfaces. The room has a dark metallic aesthetic with subtle blue accent lighting. A central holographic globe displays rotating network connections.";
-
-const VIDEO_UNDERSTANDING_SAMPLE =
-  "Scene 1 (0:00-0:05): Wide establishing shot of a technology workspace. Camera slowly pans across multiple monitors displaying code.\nScene 2 (0:05-0:12): Close-up of hands typing on a mechanical keyboard with RGB backlighting.\nScene 3 (0:12-0:20): Person interacting with a holographic interface, making gesture-based selections.\nScene 4 (0:20-0:30): Pull-back shot revealing the full command center with multiple AI dashboards active.";
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read image."));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function MediaStudioPage() {
   const [activeTab, setActiveTab] = useState<MediaTab>("image");
@@ -61,33 +64,6 @@ export default function MediaStudioPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const analyzeDemoImage = () => {
-    setHasMedia(true);
-    setIsAnalyzing(true);
-    setTimeout(() => {
-      setIsAnalyzing(false);
-      setResults([
-        { type: "Caption", content: IMAGE_CAPTION_SAMPLE },
-        {
-          type: "Objects Detected",
-          content: "Monitors (6), Keyboard (1), Desk (1), Holographic display (1), Person (1), Globe model (1)",
-        },
-        {
-          type: "Scene Classification",
-          content: "Technology workspace / Command center (confidence: 96.2%)",
-        },
-        {
-          type: "Dominant Colors",
-          content: "Cyan (#00bcd4), Dark navy (#0a1628), Silver (#c0c0c0), Blue (#2196f3)",
-        },
-        {
-          type: "Text Detected (OCR)",
-          content: '"SYSTEMS ONLINE" - "KNIGHTBOT CORE v0.1" - "MEMORY: 64GB" - "GPU: ACTIVE"',
-        },
-      ]);
-    }, 2000);
-  };
-
   const handleAnalyze = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -101,11 +77,6 @@ export default function MediaStudioPage() {
     if (mediaPreviewUrl) URL.revokeObjectURL(mediaPreviewUrl);
     setMediaPreviewUrl(URL.createObjectURL(file));
 
-    if (activeTab === "image") {
-      analyzeDemoImage();
-      return;
-    }
-
     const payload = new FormData();
     payload.append("file", file, file.name);
     payload.append(
@@ -114,6 +85,37 @@ export default function MediaStudioPage() {
     );
 
     try {
+      if (activeTab === "image") {
+        const dataUrl = await fileToDataUrl(file);
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "Analyze this image for UVB Media Studio. Describe the scene, notable objects, visible text, mood, and any uncertainty.",
+                  },
+                  { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
+                ],
+              },
+            ],
+          }),
+        });
+        const data = (await response.json().catch(() => ({}))) as {
+          content?: string;
+          error?: string;
+        };
+        if (!response.ok || !data.content) {
+          throw new Error(data.error || `Image analysis failed with ${response.status}.`);
+        }
+        setResults([{ type: "Sophia Image Analysis", content: data.content }]);
+        return;
+      }
+
       const response = await fetch("/api/media/video", {
         method: "POST",
         body: payload,

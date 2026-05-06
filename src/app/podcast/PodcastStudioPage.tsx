@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppStore, type PodcastSeat } from "@/stores/appStore";
 import {
@@ -16,12 +16,52 @@ import {
 import { Radio, Mic2, Headphones, Users } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
 
+interface CloneProfileSummary {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+function loadCloneProfiles(): CloneProfileSummary[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem("uvb:voice-clone-profiles") || "[]") as Array<Partial<CloneProfileSummary>>;
+    return Array.isArray(parsed)
+      ? parsed
+          .map((profile) => ({
+            id: typeof profile.id === "string" ? profile.id : "",
+            name: typeof profile.name === "string" ? profile.name : "Unnamed Clone",
+            provider: typeof profile.provider === "string" ? profile.provider : "local",
+          }))
+          .filter((profile) => profile.id)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function PodcastStudioPage() {
   const { podcastSeats, updatePodcastSeat, addPodcastSeat, removePodcastSeat } =
     useAppStore();
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [masterVolume, setMasterVolume] = useState(80);
+  const [noiseGate, setNoiseGate] = useState(-30);
+  const [outputFormat, setOutputFormat] = useState("WAV 48kHz / 24-bit");
+  const [cloneProfiles, setCloneProfiles] = useState<CloneProfileSummary[]>(loadCloneProfiles);
+
+  useEffect(() => {
+    if (!isRecording || isPaused) return;
+    const interval = window.setInterval(() => setRecordingTime((current) => current + 1), 1000);
+    return () => window.clearInterval(interval);
+  }, [isRecording, isPaused]);
+
+  useEffect(() => {
+    const refreshProfiles = () => setCloneProfiles(loadCloneProfiles());
+    window.addEventListener("storage", refreshProfiles);
+    return () => window.removeEventListener("storage", refreshProfiles);
+  }, []);
 
   const addSeat = () => {
     if (podcastSeats.length < 6) {
@@ -61,7 +101,10 @@ export default function PodcastStudioPage() {
           <button
             onClick={() => {
               setIsRecording(!isRecording);
-              if (!isRecording) setIsPaused(false);
+              if (!isRecording) {
+                setIsPaused(false);
+                setRecordingTime(0);
+              }
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
               isRecording
@@ -174,15 +217,21 @@ export default function PodcastStudioPage() {
                 <div className="flex items-center gap-2">
                   <select
                     className="input-field text-xs py-1.5 flex-1"
-                    defaultValue={seat.isCustomVoice ? "custom" : "default"}
+                    value={seat.voiceProfileId ?? (seat.isCustomVoice ? "custom" : "default")}
                     onChange={(e) =>
                       updatePodcastSeat(seat.id, {
                         isCustomVoice: e.target.value === "custom",
+                        voiceProfileId: e.target.value,
                       })
                     }
                   >
                     <option value="default">Default Voice</option>
                     <option value="custom">Custom Clone</option>
+                    {cloneProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        Clone: {profile.name}
+                      </option>
+                    ))}
                     <option value="preset-1">Preset: Warm Male</option>
                     <option value="preset-2">Preset: Bright Female</option>
                     <option value="preset-3">Preset: Deep Narrator</option>
@@ -195,13 +244,15 @@ export default function PodcastStudioPage() {
                     className="p-2 rounded-lg bg-uvb-dark-gray/40 border border-uvb-border/20"
                   >
                     <p className="text-[10px] text-uvb-text-muted mb-2">
-                      Upload 3-5 sec voice sample for zero-shot cloning
+                      Create and save clone profiles in Voice Analysis, then select them here.
                     </p>
-                    <label className="btn-ghost text-xs cursor-pointer inline-flex items-center gap-1">
+                    <button
+                      onClick={() => useAppStore.getState().setActiveSection("voice")}
+                      className="btn-ghost text-xs cursor-pointer inline-flex items-center gap-1"
+                    >
                       <SpeakerWaveIcon className="w-3 h-3" />
-                      Upload Sample
-                      <input type="file" className="hidden" accept="audio/*" />
-                    </label>
+                      Open Clone Lab
+                    </button>
                   </motion.div>
                 )}
               </div>
@@ -251,11 +302,13 @@ export default function PodcastStudioPage() {
               min="0"
               max="100"
               defaultValue="80"
+              value={masterVolume}
+              onChange={(event) => setMasterVolume(Number(event.target.value))}
               className="w-full accent-uvb-neon-green"
             />
             <div className="flex justify-between text-[10px] text-uvb-text-muted mt-1">
               <span>0</span>
-              <span>80</span>
+              <span>{masterVolume}</span>
               <span>100</span>
             </div>
           </div>
@@ -263,7 +316,11 @@ export default function PodcastStudioPage() {
             <label className="text-xs text-uvb-text-muted block mb-2">
               Output Format
             </label>
-            <select className="input-field text-sm">
+            <select
+              className="input-field text-sm"
+              value={outputFormat}
+              onChange={(event) => setOutputFormat(event.target.value)}
+            >
               <option>WAV 48kHz / 24-bit</option>
               <option>FLAC 44.1kHz / 16-bit</option>
               <option>MP3 320kbps</option>
@@ -279,11 +336,13 @@ export default function PodcastStudioPage() {
               min="-60"
               max="0"
               defaultValue="-30"
+              value={noiseGate}
+              onChange={(event) => setNoiseGate(Number(event.target.value))}
               className="w-full accent-uvb-steel-blue"
             />
             <div className="flex justify-between text-[10px] text-uvb-text-muted mt-1">
               <span>-60dB</span>
-              <span>-30dB</span>
+              <span>{noiseGate}dB</span>
               <span>0dB</span>
             </div>
           </div>
