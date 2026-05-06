@@ -37,6 +37,11 @@ import {
   VOICE_SETTINGS_UPDATED_EVENT,
   type VoiceSettings,
 } from "@/lib/voiceSettings";
+import {
+  IDENTITY_SETTINGS_UPDATED_EVENT,
+  loadIdentitySettings,
+  type IdentitySettings,
+} from "@/lib/identitySettings";
 
 function generateId() {
   return Math.random().toString(36).substring(2, 11);
@@ -475,6 +480,9 @@ export default function ChatInterface() {
   const [inputMode, setInputMode] = useState<"text" | "voice">("text");
   const [modelSettings, setModelSettings] = useState<ModelSettings>(() => loadModelSettings());
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() => loadVoiceSettings());
+  const [identitySettings, setIdentitySettings] = useState<IdentitySettings>(() =>
+    loadIdentitySettings()
+  );
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
   const [activityStatus, setActivityStatus] = useState("Ready for text, voice, and media.");
   const [lastFailedInput, setLastFailedInput] = useState<string | null>(null);
@@ -643,6 +651,18 @@ export default function ChatInterface() {
     return () => {
       window.removeEventListener(VOICE_SETTINGS_UPDATED_EVENT, refreshVoiceSettings);
       window.removeEventListener("storage", refreshVoiceSettings);
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshIdentitySettings = () => setIdentitySettings(loadIdentitySettings());
+
+    window.addEventListener(IDENTITY_SETTINGS_UPDATED_EVENT, refreshIdentitySettings);
+    window.addEventListener("storage", refreshIdentitySettings);
+
+    return () => {
+      window.removeEventListener(IDENTITY_SETTINGS_UPDATED_EVENT, refreshIdentitySettings);
+      window.removeEventListener("storage", refreshIdentitySettings);
     };
   }, []);
 
@@ -2252,7 +2272,7 @@ export default function ChatInterface() {
               <div className="px-3 py-8 text-center">
                 <Bot className="w-8 h-8 mx-auto mb-2 text-uvb-text-muted" />
                 <p className="text-xs text-uvb-text-muted">
-                  Start a conversation with KnightBot
+                  Start a conversation with {identitySettings.assistantName}
                 </p>
               </div>
             )}
@@ -2385,14 +2405,25 @@ export default function ChatInterface() {
                   }}
                   transition={{ duration: 3, repeat: Infinity }}
                 >
-                  <Bot className="w-10 h-10 text-uvb-neon-green" />
+                  {identitySettings.assistantPortraitUrl ? (
+                    <Image
+                      src={identitySettings.assistantPortraitUrl}
+                      alt={identitySettings.assistantName}
+                      width={80}
+                      height={80}
+                      unoptimized
+                      className="h-full w-full rounded-2xl object-cover"
+                    />
+                  ) : (
+                    <Bot className="w-10 h-10 text-uvb-neon-green" />
+                  )}
                 </motion.div>
                 <h3 className="text-xl font-semibold mb-2 font-[family-name:var(--font-display)] text-uvb-text-primary">
-                  KnightBot AI Assistant
+                  {identitySettings.assistantName}
                 </h3>
                 <p className="text-sm text-uvb-text-secondary max-w-md mb-8">
-                  Your multi-modal AI companion. Ask questions, analyze media,
-                  process voice, and more.
+                  {identitySettings.assistantSubtitle}. Ask questions, analyze media,
+                  process voice, and route local files.
                 </p>
                 <div className="grid grid-cols-2 gap-3 max-w-lg">
                   {[
@@ -2755,7 +2786,8 @@ export default function ChatInterface() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Message KnightBot..."
+                  placeholder={`Message ${identitySettings.assistantName}...`}
+                  aria-label={`Message ${identitySettings.assistantName}`}
                   className="input-field resize-none min-h-[44px] max-h-32 pr-12"
                   rows={1}
                 />

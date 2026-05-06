@@ -8,6 +8,11 @@ import {
   MagnifyingGlassIcon,
   UserCircleIcon,
 } from "@heroicons/react/24/outline";
+import {
+  IDENTITY_SETTINGS_UPDATED_EVENT,
+  loadIdentitySettings,
+  type IdentitySettings,
+} from "@/lib/identitySettings";
 
 interface HealthService {
   id: string;
@@ -27,9 +32,10 @@ export default function Header() {
   const { activeSection } = useAppStore();
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [showHealth, setShowHealth] = useState(false);
+  const [identity, setIdentity] = useState<IdentitySettings>(() => loadIdentitySettings());
 
   const sectionTitles: Record<string, string> = {
-    chat: "KnightBot Chat",
+    chat: `${identity.assistantName} Chat`,
     voice: "Voice Analysis",
     media: "Media Studio",
     podcast: "Podcast Suite",
@@ -58,6 +64,16 @@ export default function Header() {
     return () => {
       isMounted = false;
       window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshIdentity = () => setIdentity(loadIdentitySettings());
+    window.addEventListener(IDENTITY_SETTINGS_UPDATED_EVENT, refreshIdentity);
+    window.addEventListener("storage", refreshIdentity);
+    return () => {
+      window.removeEventListener(IDENTITY_SETTINGS_UPDATED_EVENT, refreshIdentity);
+      window.removeEventListener("storage", refreshIdentity);
     };
   }, []);
 
@@ -156,7 +172,16 @@ export default function Header() {
 
         {/* Profile */}
         <button className="p-1 rounded-lg hover:bg-uvb-light-gray/40 transition-colors">
-          <UserCircleIcon className="w-7 h-7 text-uvb-text-secondary hover:text-uvb-text-primary" />
+          {identity.userPortraitUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={identity.userPortraitUrl}
+              alt={identity.userName}
+              className="h-7 w-7 rounded-lg object-cover"
+            />
+          ) : (
+            <UserCircleIcon className="w-7 h-7 text-uvb-text-secondary hover:text-uvb-text-primary" />
+          )}
         </button>
       </div>
     </header>

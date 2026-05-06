@@ -18,6 +18,12 @@ import {
   Brain,
   Radio,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  IDENTITY_SETTINGS_UPDATED_EVENT,
+  loadIdentitySettings,
+  type IdentitySettings,
+} from "@/lib/identitySettings";
 
 const NAV_ITEMS = [
   { id: "chat", label: "KnightBot Chat", icon: ChatBubbleLeftRightIcon, lucideIcon: Brain },
@@ -31,6 +37,17 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const { sidebarOpen, setSidebarOpen, activeSection, setActiveSection } =
     useAppStore();
+  const [identity, setIdentity] = useState<IdentitySettings>(() => loadIdentitySettings());
+
+  useEffect(() => {
+    const refreshIdentity = () => setIdentity(loadIdentitySettings());
+    window.addEventListener(IDENTITY_SETTINGS_UPDATED_EVENT, refreshIdentity);
+    window.addEventListener("storage", refreshIdentity);
+    return () => {
+      window.removeEventListener(IDENTITY_SETTINGS_UPDATED_EVENT, refreshIdentity);
+      window.removeEventListener("storage", refreshIdentity);
+    };
+  }, []);
 
   return (
     <>
@@ -76,10 +93,10 @@ export default function Sidebar() {
                 </div>
                 <div className="min-w-0">
                   <h1 className="text-sm font-bold text-uvb-text-primary truncate font-[family-name:var(--font-display)]">
-                    UVB
+                    {identity.appName}
                   </h1>
                   <p className="text-[10px] text-uvb-text-muted truncate">
-                    KnightBot v0.1
+                    {identity.assistantName}
                   </p>
                 </div>
               </motion.div>

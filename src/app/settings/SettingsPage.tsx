@@ -4,14 +4,13 @@ import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   UserCircleIcon,
-  LockClosedIcon,
   BellIcon,
   CpuChipIcon,
   EyeIcon,
   PaintBrushIcon,
-  KeyIcon,
 } from "@heroicons/react/24/outline";
 import { Shield, Palette, Brain } from "lucide-react";
+import Image from "next/image";
 import {
   DEFAULT_MODEL_SETTINGS,
   loadModelSettings,
@@ -23,6 +22,12 @@ import {
   saveVoiceSettings,
   type VoiceSettings,
 } from "@/lib/voiceSettings";
+import {
+  fileToIdentityDataUrl,
+  loadIdentitySettings,
+  saveIdentitySettings,
+  type IdentitySettings,
+} from "@/lib/identitySettings";
 
 const MODEL_PRESETS = [
   {
@@ -68,7 +73,12 @@ export default function SettingsPage() {
     message: string;
   }>({ state: "idle", message: "" });
   const [profileStatus, setProfileStatus] = useState("");
+  const [identitySettings, setIdentitySettings] = useState<IdentitySettings>(() =>
+    loadIdentitySettings()
+  );
   const importInputRef = useRef<HTMLInputElement>(null);
+  const userPortraitInputRef = useRef<HTMLInputElement>(null);
+  const assistantPortraitInputRef = useRef<HTMLInputElement>(null);
 
   const tabs = [
     { id: "profile", label: "Profile", icon: UserCircleIcon },
@@ -87,6 +97,29 @@ export default function SettingsPage() {
   const updateVoiceSettings = (updates: Partial<VoiceSettings>) => {
     setVoiceSettings((current) => ({ ...current, ...updates }));
     setVoiceStatus({ state: "idle", message: "" });
+  };
+
+  const updateIdentitySettings = (updates: Partial<IdentitySettings>) => {
+    setIdentitySettings((current) => ({ ...current, ...updates }));
+    setProfileStatus("");
+  };
+
+  const saveCurrentIdentitySettings = () => {
+    saveIdentitySettings(identitySettings);
+    setProfileStatus("Saved local user and Sophia identity settings.");
+  };
+
+  const loadPortrait = async (file: File, target: "user" | "assistant") => {
+    try {
+      const dataUrl = await fileToIdentityDataUrl(file);
+      updateIdentitySettings(
+        target === "user" ? { userPortraitUrl: dataUrl } : { assistantPortraitUrl: dataUrl }
+      );
+      setProfileStatus("Portrait loaded. Save identity to apply everywhere.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load portrait.";
+      setProfileStatus(message);
+    }
   };
 
   const testModelConnection = async (settings = modelSettings) => {
@@ -184,6 +217,7 @@ export default function SettingsPage() {
     const payload = {
       exportedAt: new Date().toISOString(),
       app: "UVB KnightBot",
+      identitySettings,
       modelSettings,
       voiceSettings,
     };
@@ -204,6 +238,7 @@ export default function SettingsPage() {
       const data = JSON.parse(await file.text()) as {
         modelSettings?: Partial<ModelSettings>;
         voiceSettings?: Partial<VoiceSettings>;
+        identitySettings?: Partial<IdentitySettings>;
       };
 
       if (data.modelSettings) {
@@ -226,6 +261,12 @@ export default function SettingsPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ voiceSettings: nextVoiceSettings }),
         });
+      }
+
+      if (data.identitySettings) {
+        const nextIdentitySettings = { ...identitySettings, ...data.identitySettings };
+        setIdentitySettings(nextIdentitySettings);
+        saveIdentitySettings(nextIdentitySettings);
       }
 
       setProfileStatus("Imported profile and applied settings.");
@@ -270,16 +311,47 @@ export default function SettingsPage() {
                     User Profile
                   </h3>
                   <div className="flex items-center gap-6 mb-6">
-                    <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-uvb-royal-purple to-uvb-steel-blue flex items-center justify-center">
-                      <UserCircleIcon className="w-10 h-10 text-uvb-brushed-silver" />
-                    </div>
+                    <button
+                      onClick={() => userPortraitInputRef.current?.click()}
+                      className="h-20 w-20 overflow-hidden rounded-2xl bg-gradient-to-br from-uvb-royal-purple to-uvb-steel-blue flex items-center justify-center"
+                    >
+                      {identitySettings.userPortraitUrl ? (
+                        <Image
+                          src={identitySettings.userPortraitUrl}
+                          alt={identitySettings.userName}
+                          width={80}
+                          height={80}
+                          unoptimized
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <UserCircleIcon className="w-10 h-10 text-uvb-brushed-silver" />
+                      )}
+                    </button>
                     <div>
                       <h4 className="text-lg font-semibold text-uvb-text-primary">
-                        Knight User
+                        {identitySettings.userName}
                       </h4>
                       <p className="text-sm text-uvb-text-muted">
-                        knight@uvb.local
+                        {identitySettings.userEmail}
                       </p>
+                      <button
+                        onClick={() => userPortraitInputRef.current?.click()}
+                        className="mt-2 text-xs text-uvb-neon-green hover:text-uvb-text-primary"
+                      >
+                        Choose portrait
+                      </button>
+                      <input
+                        ref={userPortraitInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void loadPortrait(file, "user");
+                          event.target.value = "";
+                        }}
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -289,7 +361,10 @@ export default function SettingsPage() {
                       </label>
                       <input
                         type="text"
-                        defaultValue="Knight User"
+                        value={identitySettings.userName}
+                        onChange={(event) =>
+                          updateIdentitySettings({ userName: event.target.value })
+                        }
                         className="input-field"
                       />
                     </div>
@@ -299,7 +374,10 @@ export default function SettingsPage() {
                       </label>
                       <input
                         type="email"
-                        defaultValue="knight@uvb.local"
+                        value={identitySettings.userEmail}
+                        onChange={(event) =>
+                          updateIdentitySettings({ userEmail: event.target.value })
+                        }
                         className="input-field"
                       />
                     </div>
@@ -308,35 +386,97 @@ export default function SettingsPage() {
 
                 <div className="uvb-card">
                   <h3 className="text-sm font-semibold mb-4 text-uvb-text-primary font-[family-name:var(--font-display)]">
-                    Password
+                    Sophia Identity
                   </h3>
-                  <div className="grid grid-cols-1 gap-4 max-w-sm">
+                  <div className="flex items-center gap-6 mb-6">
+                    <button
+                      onClick={() => assistantPortraitInputRef.current?.click()}
+                      className="h-20 w-20 overflow-hidden rounded-2xl border border-uvb-neon-green/20 bg-uvb-deep-teal/30 flex items-center justify-center"
+                    >
+                      {identitySettings.assistantPortraitUrl ? (
+                        <Image
+                          src={identitySettings.assistantPortraitUrl}
+                          alt={identitySettings.assistantName}
+                          width={80}
+                          height={80}
+                          unoptimized
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <CpuChipIcon className="w-10 h-10 text-uvb-neon-green" />
+                      )}
+                    </button>
+                    <div>
+                      <h4 className="text-lg font-semibold text-uvb-text-primary">
+                        {identitySettings.assistantName}
+                      </h4>
+                      <p className="text-sm text-uvb-text-muted">
+                        {identitySettings.assistantSubtitle}
+                      </p>
+                      <button
+                        onClick={() => assistantPortraitInputRef.current?.click()}
+                        className="mt-2 text-xs text-uvb-neon-green hover:text-uvb-text-primary"
+                      >
+                        Choose portrait
+                      </button>
+                      <input
+                        ref={assistantPortraitInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void loadPortrait(file, "assistant");
+                          event.target.value = "";
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
-                        Current Password
+                        Assistant Name
                       </label>
-                      <div className="relative">
-                        <LockClosedIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-uvb-text-muted" />
-                        <input
-                          type="password"
-                          className="input-field pl-10"
-                          placeholder="Enter current password"
-                        />
-                      </div>
+                      <input
+                        value={identitySettings.assistantName}
+                        onChange={(event) =>
+                          updateIdentitySettings({ assistantName: event.target.value })
+                        }
+                        className="input-field"
+                      />
                     </div>
                     <div>
                       <label className="text-xs text-uvb-text-muted block mb-1.5">
-                        New Password
+                        App Name
                       </label>
-                      <div className="relative">
-                        <KeyIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-uvb-text-muted" />
-                        <input
-                          type="password"
-                          className="input-field pl-10"
-                          placeholder="Enter new password"
-                        />
-                      </div>
+                      <input
+                        value={identitySettings.appName}
+                        onChange={(event) =>
+                          updateIdentitySettings({ appName: event.target.value })
+                        }
+                        className="input-field"
+                      />
                     </div>
+                  </div>
+                  <div className="mt-4">
+                    <label className="text-xs text-uvb-text-muted block mb-1.5">
+                      Assistant Subtitle
+                    </label>
+                    <input
+                      value={identitySettings.assistantSubtitle}
+                      onChange={(event) =>
+                        updateIdentitySettings({ assistantSubtitle: event.target.value })
+                      }
+                      className="input-field"
+                    />
+                  </div>
+                  <div className="mt-4 flex items-center gap-3">
+                    <button onClick={saveCurrentIdentitySettings} className="btn-primary">
+                      Save Identity
+                    </button>
+                    {profileStatus && (
+                      <span className="text-xs text-uvb-text-muted">{profileStatus}</span>
+                    )}
                   </div>
                 </div>
               </motion.div>
