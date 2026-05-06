@@ -30,6 +30,21 @@ const telegramApiOrigin = (process.env.TELEGRAM_API_ORIGIN ?? "https://api.teleg
 const telegramFileOrigin = (process.env.TELEGRAM_FILE_ORIGIN ?? telegramApiOrigin).replace(/\/+$/, "");
 const telegramCloudDownloadMaxMb = Number.parseInt(process.env.TELEGRAM_CLOUD_DOWNLOAD_MAX_MB ?? "20", 10);
 const uvbUrl = (process.env.UVB_PUBLIC_URL ?? "http://127.0.0.1:3010").replace(/\/+$/, "");
+const telegramSttUrl = (process.env.TELEGRAM_STT_URL ?? process.env.UVB_STT_URL ?? "http://127.0.0.1:8001/v1/audio/transcriptions").trim();
+const telegramSttModel = (process.env.TELEGRAM_STT_MODEL ?? process.env.UVB_STT_MODEL ?? "Systran/faster-distil-whisper-large-v3").trim();
+const telegramSttLanguage = (process.env.TELEGRAM_STT_LANGUAGE ?? process.env.UVB_STT_LANGUAGE ?? "en").trim();
+const telegramSttResponseFormat = (process.env.TELEGRAM_STT_RESPONSE_FORMAT ?? process.env.UVB_STT_RESPONSE_FORMAT ?? "json").trim();
+const telegramSttTemperature = (process.env.TELEGRAM_STT_TEMPERATURE ?? process.env.UVB_STT_TEMPERATURE ?? "0").trim();
+const telegramSttPrompt = (
+  process.env.TELEGRAM_STT_PROMPT ??
+  process.env.UVB_STT_PROMPT ??
+  "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly. Use these spellings when spoken: Jusstin, Codee, Butt Stuff."
+).trim();
+const telegramSttHotwords = (
+  process.env.TELEGRAM_STT_HOTWORDS ??
+  process.env.UVB_STT_HOTWORDS ??
+  "Jusstin, Codee, Butt Stuff"
+).trim();
 const telegramSendTextReplies = (process.env.TELEGRAM_SEND_TEXT_REPLIES ?? "true").toLowerCase() !== "false";
 const telegramSendTtsReplies = (process.env.TELEGRAM_SEND_TTS_REPLIES ?? "true").toLowerCase() !== "false";
 const telegramTtsVoice = process.env.TELEGRAM_TTS_VOICE || process.env.UVB_TTS_VOICE || "af_nova";
@@ -66,6 +81,14 @@ function logStage(message) {
 
 function formatDuration(startedAt) {
   return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+}
+
+function applyTelegramAliases(text) {
+  return text
+    .replace(/\bJustin\b/g, "Jusstin")
+    .replace(/\bCody\b/g, "Codee")
+    .replace(/\bBut Stuff\b/g, "Butt Stuff")
+    .replace(/\bbut stuff\b/g, "Butt Stuff");
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 120000, label = "request") {
@@ -571,21 +594,27 @@ async function readTelegramTextDocument(message) {
 async function transcribeAudioBlob(blob, fileName) {
   const form = new FormData();
   form.append("file", blob, fileName || "telegram-audio.mp3");
+  form.append("model", telegramSttModel);
+  if (telegramSttLanguage) form.append("language", telegramSttLanguage);
+  if (telegramSttPrompt) form.append("prompt", telegramSttPrompt);
+  if (telegramSttResponseFormat) form.append("response_format", telegramSttResponseFormat);
+  if (telegramSttTemperature) form.append("temperature", telegramSttTemperature);
+  if (telegramSttHotwords) form.append("hotwords", telegramSttHotwords);
 
   const startedAt = Date.now();
   const sttResponse = await fetchWithTimeout(
-    `${uvbUrl}/api/stt`,
+    telegramSttUrl,
     { method: "POST", body: form },
     telegramUvbSttTimeoutMs,
-    "UVB STT"
+    "Telegram STT"
   );
   const data = await sttResponse.json().catch(() => ({}));
   if (!sttResponse.ok || !data.text) {
     throw new Error(data.error ?? "Telegram media transcription failed.");
   }
 
-  logStage(`UVB STT completed for ${fileName || "telegram-audio.mp3"} in ${formatDuration(startedAt)}.`);
-  return data.text;
+  logStage(`Telegram STT completed for ${fileName || "telegram-audio.mp3"} in ${formatDuration(startedAt)}.`);
+  return applyTelegramAliases(data.text);
 }
 
 async function buildTelegramVideoContent(message) {

@@ -8,6 +8,7 @@ const DEFAULT_STT_MODEL =
 const DEFAULT_STT_LANGUAGE = process.env.UVB_STT_LANGUAGE ?? "en";
 const DEFAULT_STT_RESPONSE_FORMAT = process.env.UVB_STT_RESPONSE_FORMAT ?? "json";
 const DEFAULT_STT_TEMPERATURE = process.env.UVB_STT_TEMPERATURE ?? "0";
+const DEFAULT_STT_TIMEOUT_MS = Number.parseInt(process.env.UVB_STT_TIMEOUT_MS ?? "120000", 10);
 const DEFAULT_STT_PROMPT =
   process.env.UVB_STT_PROMPT ??
   "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly.";
@@ -39,6 +40,22 @@ function parseAliasRules(value: FormDataEntryValue | null) {
   }
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`STT endpoint timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function POST(request: NextRequest) {
   let incoming: FormData;
 
@@ -56,8 +73,13 @@ export async function POST(request: NextRequest) {
   const endpoint = String(incoming.get("endpoint") || DEFAULT_STT_URL).trim();
   const model = String(incoming.get("model") || DEFAULT_STT_MODEL).trim();
   const aliasRules = parseAliasRules(incoming.get("aliasRules"));
+  const timeoutMs = Number.isFinite(DEFAULT_STT_TIMEOUT_MS) && DEFAULT_STT_TIMEOUT_MS >= 5000
+    ? DEFAULT_STT_TIMEOUT_MS
+    : 120000;
+  const audioBytes = await file.arrayBuffer();
+  const forwardedFile = new Blob([audioBytes], { type: file.type || "application/octet-stream" });
   const payload = new FormData();
-  payload.append("file", file, file.name || "recording.webm");
+  payload.append("file", forwardedFile, file.name || "recording.webm");
   payload.append("model", model);
   appendOptional(payload, "language", incoming.get("language") || DEFAULT_STT_LANGUAGE);
   appendOptional(
@@ -80,10 +102,10 @@ export async function POST(request: NextRequest) {
   );
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: "POST",
       body: payload,
-    });
+    }, timeoutMs);
     const rawText = await response.text();
 
     if (!response.ok) {
