@@ -1003,6 +1003,75 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="uvb-card">
+                  <h3 className="mb-4 text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                    Infrastructure Priority Stack
+                  </h3>
+                  <div className="space-y-3">
+                    {[
+                      {
+                        priority: "P0",
+                        title: "Approval Queue + Audit Trail",
+                        detail:
+                          "Before Sophia can execute local actions, every browser/computer/coding tool call needs a visible queued approval, result, and rollback note.",
+                      },
+                      {
+                        priority: "P0",
+                        title: "Browser-Use Runtime",
+                        detail:
+                          "Wire a Playwright/browser-use style runner for page navigation, screenshots, forms, and logged-in web workflows inside the configured domain scope.",
+                      },
+                      {
+                        priority: "P1",
+                        title: "Coding Agent Adapter",
+                        detail:
+                          "Add an adapter that can route coding jobs to Local UVB, Kilo Gateway, Kilo CLI/ACP, or OpenHands-style sandbox execution.",
+                      },
+                      {
+                        priority: "P1",
+                        title: "Workspace Patch Sandbox",
+                        detail:
+                          "Keep Sophia's file edits inside a declared workspace, show diffs before applying, and block secrets or dangerous paths by default.",
+                      },
+                      {
+                        priority: "P2",
+                        title: "Computer-Use Bridge",
+                        detail:
+                          "Add Windows UI Automation or a supervised desktop bridge after browser tools are stable, because OS-level control has higher risk.",
+                      },
+                      {
+                        priority: "P2",
+                        title: "Memory Retrieval Into Chat",
+                        detail:
+                          "Promote the Memory Bank from searchable storage into opt-in context retrieval with citations to the source thread or pinned memory.",
+                      },
+                      {
+                        priority: "P3",
+                        title: "Provider Health + Fallbacks",
+                        detail:
+                          "Probe local/Kilo/custom providers, display latency/errors, and select free or local fallbacks before paid quota is touched.",
+                      },
+                    ].map((item) => (
+                      <div
+                        key={item.title}
+                        className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-3"
+                      >
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className="rounded-full border border-uvb-neon-green/30 px-2 py-0.5 text-[10px] font-semibold text-uvb-neon-green">
+                            {item.priority}
+                          </span>
+                          <h4 className="text-sm font-semibold text-uvb-text-primary">
+                            {item.title}
+                          </h4>
+                        </div>
+                        <p className="text-xs leading-relaxed text-uvb-text-muted">
+                          {item.detail}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="uvb-card">
                   <div className="mb-4 flex items-center gap-2">
                     <Code2 className="h-5 w-5 text-uvb-steel-blue" />
                     <h3 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
