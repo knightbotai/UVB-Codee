@@ -1692,6 +1692,33 @@ export default function ChatInterface() {
     recorder.start(200);
   };
 
+  const resetLiveVoiceResources = async () => {
+    liveRecorderRef.current?.stop();
+    liveRecorderRef.current = null;
+    liveStreamRef.current?.getTracks().forEach((track) => track.stop());
+    liveStreamRef.current = null;
+    if (liveSocketRef.current?.readyState === WebSocket.OPEN) {
+      liveSocketRef.current.send(JSON.stringify({ type: "cancel" }));
+    }
+    liveSocketRef.current?.close();
+    liveSocketRef.current = null;
+    if (pipecatClientRef.current) {
+      await pipecatClientRef.current.disconnect().catch(() => undefined);
+      pipecatClientRef.current = null;
+    }
+    if (pipecatAudioRef.current) {
+      pipecatAudioRef.current.pause();
+      pipecatAudioRef.current.srcObject = null;
+      pipecatAudioRef.current = null;
+    }
+    clearSpeechAudioSource();
+    clearPipecatFallbackTimer();
+    liveUserSpeakingRef.current = false;
+    liveCaptureArmedRef.current = false;
+    liveSpeechStartedRef.current = false;
+    liveAutoStopInFlightRef.current = false;
+  };
+
   const connectPipecatLiveVoice = async () => {
     const [{ PipecatClient }, { SmallWebRTCTransport, WavMediaManager }] = await Promise.all([
       import("@pipecat-ai/client-js"),
@@ -1797,7 +1824,7 @@ export default function ChatInterface() {
           scheduleLiveVoiceTurnFlush(LIVE_VOICE_STOP_FLUSH_MS);
         },
         onUserTranscript: (data: PipecatTranscriptData) => {
-          const transcript = data.text?.trim();
+          const transcript = applyNameAliases(data.text?.trim() ?? "", loadAliasRules());
           if (!transcript) return;
 
           setLiveTranscript(transcript);
@@ -1925,12 +1952,13 @@ export default function ChatInterface() {
       await connectLiveVoice(stream);
       setLiveVoiceRecording(false);
     } catch (error) {
-    setLiveVoiceEnabled(false);
-    liveVoiceEnabledRef.current = false;
-    liveTurnStateRef.current = "idle";
-    setLiveVoicePhase("idle");
-    setLiveVadDebug({ level: 0, threshold: 0, floor: 0 });
-    setLiveVoiceConnected(false);
+      await resetLiveVoiceResources();
+      setLiveVoiceEnabled(false);
+      liveVoiceEnabledRef.current = false;
+      liveTurnStateRef.current = "idle";
+      setLiveVoicePhase("idle");
+      setLiveVadDebug({ level: 0, threshold: 0, floor: 0 });
+      setLiveVoiceConnected(false);
       setLiveVoiceRecording(false);
       await stopVoiceLevelMonitor();
       setActivityStatus(formatMicrophoneError(error));
@@ -1976,38 +2004,15 @@ export default function ChatInterface() {
   };
 
   const cancelLiveVoice = async () => {
-    liveRecorderRef.current?.stop();
-    liveRecorderRef.current = null;
-    liveStreamRef.current?.getTracks().forEach((track) => track.stop());
-    liveStreamRef.current = null;
-    if (liveSocketRef.current?.readyState === WebSocket.OPEN) {
-      liveSocketRef.current.send(JSON.stringify({ type: "cancel" }));
-    }
-    liveSocketRef.current?.close();
-    liveSocketRef.current = null;
-    if (pipecatClientRef.current) {
-      await pipecatClientRef.current.disconnect().catch(() => undefined);
-      pipecatClientRef.current = null;
-    }
-    if (pipecatAudioRef.current) {
-      pipecatAudioRef.current.pause();
-      pipecatAudioRef.current.srcObject = null;
-      pipecatAudioRef.current = null;
-    }
-    clearSpeechAudioSource();
-    clearPipecatFallbackTimer();
+    await resetLiveVoiceResources();
     pipecatPendingTranscriptRef.current = "";
     pipecatFallbackInFlightRef.current = false;
-    liveUserSpeakingRef.current = false;
     setLiveMicMutedState(false);
     setLiveVoiceEnabled(false);
     liveVoiceEnabledRef.current = false;
     liveTurnStateRef.current = "idle";
     setLiveVoicePhase("idle");
     setLiveVadDebug({ level: 0, threshold: 0, floor: 0 });
-    liveCaptureArmedRef.current = false;
-    liveSpeechStartedRef.current = false;
-    liveAutoStopInFlightRef.current = false;
     setLiveVoiceConnected(false);
     setLiveVoiceRecording(false);
     setLiveTranscript("");

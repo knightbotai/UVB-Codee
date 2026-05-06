@@ -68,7 +68,23 @@ async function checkService(service: (typeof SERVICES)[number]): Promise<Service
 }
 
 export async function GET() {
-  const services = await Promise.all(SERVICES.map(checkService));
+  const services = await Promise.race([
+    Promise.all(SERVICES.map(checkService)),
+    new Promise<ServiceCheck[]>((resolve) =>
+      setTimeout(
+        () =>
+          resolve(
+            SERVICES.map((service) => ({
+              ...service,
+              online: false,
+              latencyMs: 3500,
+              error: "Health probe timed out.",
+            }))
+          ),
+        3500
+      )
+    ),
+  ]);
   const onlineCount = services.filter((service) => service.online).length;
 
   return NextResponse.json({
