@@ -56,6 +56,35 @@ const MAX_MODEL_IMAGE_PIXELS = 1_200_000;
 const MAX_MODEL_IMAGE_SIDE = 1600;
 const MODEL_IMAGE_JPEG_QUALITY = 0.86;
 const DEFAULT_IMAGE_PROMPT = "Describe this image in great detail.";
+const MAX_TEXT_DOCUMENT_BYTES = 512 * 1024;
+const MAX_TEXT_DOCUMENT_CHARS = 120_000;
+const TEXT_DOCUMENT_EXTENSIONS = new Set([
+  ".txt",
+  ".md",
+  ".markdown",
+  ".json",
+  ".csv",
+  ".tsv",
+  ".log",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".ini",
+  ".toml",
+  ".env",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".mjs",
+  ".cjs",
+  ".css",
+  ".html",
+  ".py",
+  ".ps1",
+  ".sh",
+  ".sql",
+]);
 
 type ChatModelContentPart =
   | { type: "text"; text: string }
@@ -161,6 +190,40 @@ function buildModelContent(text: string, attachments: ChatAttachment[] = []): Ch
       image_url: { url: attachment.dataUrl ?? "", detail: "auto" as const },
     })),
   ];
+}
+
+function getFileExtension(fileName: string) {
+  const dotIndex = fileName.lastIndexOf(".");
+  return dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : "";
+}
+
+function isTextDocument(file: File) {
+  if (file.type.startsWith("text/")) return true;
+  if (file.type === "application/json") return true;
+  if (file.type === "application/xml") return true;
+  if (file.type === "application/x-yaml") return true;
+  return TEXT_DOCUMENT_EXTENSIONS.has(getFileExtension(file.name));
+}
+
+async function readTextDocument(file: File) {
+  if (file.size > MAX_TEXT_DOCUMENT_BYTES) {
+    throw new Error(`${file.name} is over ${Math.round(MAX_TEXT_DOCUMENT_BYTES / 1024)} KB.`);
+  }
+
+  const rawText = await file.text();
+  const normalizedText =
+    rawText.length > MAX_TEXT_DOCUMENT_CHARS
+      ? `${rawText.slice(0, MAX_TEXT_DOCUMENT_CHARS)}\n\n[Document truncated at ${MAX_TEXT_DOCUMENT_CHARS} characters.]`
+      : rawText;
+
+  return [
+    `--- BEGIN ATTACHED TEXT DOCUMENT: ${file.name} ---`,
+    `Media type: ${file.type || "text/plain"}`,
+    `Size: ${file.size} bytes`,
+    "",
+    normalizedText,
+    `--- END ATTACHED TEXT DOCUMENT: ${file.name} ---`,
+  ].join("\n");
 }
 
 function isPipecatFinalTranscript(data: PipecatTranscriptData): boolean {
@@ -1922,13 +1985,45 @@ export default function ChatInterface() {
 
     if (!otherFiles.length) return;
 
-    const summaries = otherFiles.map((file) => {
+    const textFiles = otherFiles.filter(isTextDocument);
+    const unsupportedFiles = otherFiles.filter((file) => !isTextDocument(file));
+    const documentBlocks: string[] = [];
+    const skippedDocuments: string[] = [];
+
+    for (const file of textFiles) {
+      try {
+        documentBlocks.push(await readTextDocument(file));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "could not be read";
+        skippedDocuments.push(`${file.name}: ${message}`);
+      }
+    }
+
+    const unsupportedSummaries = unsupportedFiles.map((file) => {
       const sizeKb = Math.max(1, Math.round(file.size / 1024));
-      return `[Attached ${file.type || "file"}: ${file.name}, ${sizeKb} KB]`;
+      return `[Unsupported local file attached but not routed yet: ${file.name}, ${file.type || "unknown type"}, ${sizeKb} KB]`;
     });
 
-    setInput((current) => [current.trim(), ...summaries].filter(Boolean).join("\n"));
-    setActivityStatus("Attachment noted. Vision/file routing is staged in chat context.");
+    if (documentBlocks.length || unsupportedSummaries.length || skippedDocuments.length) {
+      setInput((current) =>
+        [
+          current.trim(),
+          ...documentBlocks,
+          ...unsupportedSummaries,
+          ...skippedDocuments.map((item) => `[Skipped document: ${item}]`),
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+      );
+    }
+
+    if (documentBlocks.length) {
+      setActivityStatus(`Attached ${documentBlocks.length} text document(s). Send when ready.`);
+    } else if (skippedDocuments.length) {
+      setActivityStatus("Document attach skipped: size or read limit hit.");
+    } else {
+      setActivityStatus("File noted. Binary/PDF document extraction is still next.");
+    }
   };
 
   const openAttachmentPicker = (accept: string) => {
@@ -2617,7 +2712,11 @@ export default function ChatInterface() {
                     <PhotoIcon className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => openAttachmentPicker("video/*,audio/*,.pdf,.txt,.md,.json,.csv")}
+                    onClick={() =>
+                      openAttachmentPicker(
+                        "video/*,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.log,.xml,.yaml,.yml,.ini,.toml,.env,.js,.jsx,.ts,.tsx,.mjs,.cjs,.css,.html,.py,.ps1,.sh,.sql,.pdf"
+                      )
+                    }
                     className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
                     title="Attach media or file"
                     aria-label="Attach media or file"
