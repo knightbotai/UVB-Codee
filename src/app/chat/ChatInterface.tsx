@@ -337,6 +337,26 @@ function safeMessageRole(value: unknown): "user" | "assistant" | "system" {
   return value === "user" || value === "assistant" || value === "system" ? value : "assistant";
 }
 
+function safeImageAttachments(value: unknown): ChatAttachment[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((attachment): attachment is Partial<ChatAttachment> =>
+      Boolean(attachment) && typeof attachment === "object"
+    )
+    .filter((attachment) => attachment.kind === "image")
+    .map((attachment, index) => ({
+      id: safeDisplayText(attachment.id) || `image-${index}`,
+      name: safeDisplayText(attachment.name) || "image",
+      mediaType: safeDisplayText(attachment.mediaType) || "image/jpeg",
+      dataUrl: safeDisplayText(attachment.dataUrl) || undefined,
+      size: typeof attachment.size === "number" && Number.isFinite(attachment.size)
+        ? attachment.size
+        : 0,
+      kind: "image" as const,
+    }));
+}
+
 function formatMicrophoneError(error: unknown) {
   const message = error instanceof Error ? error.message : "Microphone access failed.";
   const name = error instanceof DOMException ? error.name : "";
@@ -2507,8 +2527,8 @@ export default function ChatInterface() {
                   const role = safeMessageRole(msg.role);
                   const content = safeDisplayText(msg.content);
                   const messageId = safeDisplayText(msg.id) || `message-${index}`;
-                  const imageAttachments =
-                    msg.attachments?.filter((attachment) => attachment.kind === "image") ?? [];
+                  const bookmarked = Boolean(msg.bookmarked);
+                  const imageAttachments = safeImageAttachments(msg.attachments);
                   const hideDefaultImagePrompt =
                     role === "user" &&
                     imageAttachments.length > 0 &&
@@ -2541,13 +2561,13 @@ export default function ChatInterface() {
                               key={attachment.id}
                               onClick={() => attachment.dataUrl && setExpandedImage(attachment)}
                               disabled={!attachment.dataUrl}
-                              title={`Open ${attachment.name}`}
+                              title={`Open ${safeDisplayText(attachment.name) || "image"}`}
                               className="group block overflow-hidden rounded-lg border border-uvb-border/40 bg-uvb-matte-black/60"
                             >
                               {attachment.dataUrl ? (
                                 <Image
                                   src={attachment.dataUrl}
-                                  alt={attachment.name}
+                                  alt={safeDisplayText(attachment.name) || "image"}
                                   width={96}
                                   height={96}
                                   unoptimized
@@ -2602,10 +2622,10 @@ export default function ChatInterface() {
                             </button>
                             <button
                               onClick={() => toggleBookmark(msg)}
-                              title={msg.bookmarked ? "Remove bookmark" : "Bookmark response"}
-                              aria-label={msg.bookmarked ? "Remove bookmark" : "Bookmark response"}
+                              title={bookmarked ? "Remove bookmark" : "Bookmark response"}
+                              aria-label={bookmarked ? "Remove bookmark" : "Bookmark response"}
                               className={`rounded p-1 transition-colors hover:bg-uvb-light-gray/40 ${
-                                msg.bookmarked
+                                bookmarked
                                   ? "text-uvb-accent-yellow"
                                   : "text-uvb-text-muted hover:text-uvb-text-secondary"
                               }`}
