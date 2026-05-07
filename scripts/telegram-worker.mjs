@@ -55,6 +55,9 @@ const telegramVideoMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_MAX_MB ?? 
 const telegramVideoDirectMaxMb = Number.parseInt(process.env.TELEGRAM_VIDEO_DIRECT_MAX_MB ?? "500", 10);
 const telegramVideoFrameCount = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_COUNT ?? "6", 10);
 const telegramVideoFrameMaxWidth = Number.parseInt(process.env.TELEGRAM_VIDEO_FRAME_MAX_WIDTH ?? "960", 10);
+const telegramImageMaxPixels = Number.parseInt(process.env.TELEGRAM_IMAGE_MAX_PIXELS ?? "1200000", 10);
+const telegramImageMaxSide = Number.parseInt(process.env.TELEGRAM_IMAGE_MAX_SIDE ?? "1600", 10);
+const telegramImageJpegQuality = Number.parseInt(process.env.TELEGRAM_IMAGE_JPEG_QUALITY ?? "5", 10);
 const modelMediaHostDir = path.resolve(process.env.UVB_MODEL_MEDIA_HOST_DIR ?? path.join(root, ".uvb", "model-media"));
 const modelMediaContainerDir = (process.env.UVB_MODEL_MEDIA_CONTAINER_DIR ?? "/uvb-media").replace(/\/+$/, "");
 const telegramTtsChunkChars = Number.parseInt(
@@ -472,6 +475,86 @@ function runFfprobe(args) {
   });
 }
 
+async function probeImageDimensions(inputPath) {
+  try {
+    const output = await runFfprobe([
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "csv=s=x:p=0",
+      inputPath,
+    ]);
+    const [widthText, heightText] = output.split("x");
+    const width = Number.parseInt(widthText, 10);
+    const height = Number.parseInt(heightText, 10);
+    return {
+      width: Number.isFinite(width) && width > 0 ? width : 0,
+      height: Number.isFinite(height) && height > 0 ? height : 0,
+    };
+  } catch {
+    return { width: 0, height: 0 };
+  }
+}
+
+function getModelSafeImageSize(width, height) {
+  if (!width || !height) return { width: 0, height: 0 };
+  const maxPixels = Number.isFinite(telegramImageMaxPixels) && telegramImageMaxPixels > 100000
+    ? telegramImageMaxPixels
+    : 1200000;
+  const maxSide = Number.isFinite(telegramImageMaxSide) && telegramImageMaxSide >= 512
+    ? telegramImageMaxSide
+    : 1600;
+  const pixelScale = Math.sqrt(maxPixels / Math.max(1, width * height));
+  const sideScale = maxSide / Math.max(width, height, 1);
+  const scale = Math.min(1, pixelScale, sideScale);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+async function normalizeTelegramImageBlob(blob, fileName, tempDir) {
+  const inputExtension = path.extname(fileName || "") || ".jpg";
+  const inputPath = path.join(tempDir, `telegram-image-input${inputExtension}`);
+  const outputPath = path.join(tempDir, "telegram-image-model.jpg");
+  await writeFile(inputPath, Buffer.from(await blob.arrayBuffer()));
+
+  const source = await probeImageDimensions(inputPath);
+  const target = getModelSafeImageSize(source.width, source.height);
+  const quality = Number.isFinite(telegramImageJpegQuality)
+    ? Math.min(Math.max(telegramImageJpegQuality, 2), 12)
+    : 5;
+  const fallbackMaxSide = Number.isFinite(telegramImageMaxSide) && telegramImageMaxSide >= 512
+    ? telegramImageMaxSide
+    : 1600;
+  const scaleFilter = target.width && target.height
+    ? `scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease`
+    : `scale='if(gt(iw,ih),${fallbackMaxSide},-2)':'if(gt(iw,ih),-2,${fallbackMaxSide})':force_original_aspect_ratio=decrease`;
+
+  await runFfmpeg([
+    "-y",
+    "-i",
+    inputPath,
+    "-vf",
+    scaleFilter,
+    "-frames:v",
+    "1",
+    "-q:v",
+    String(quality),
+    outputPath,
+  ]);
+
+  const normalizedBytes = await readFile(outputPath);
+  const targetText = target.width && target.height ? `${target.width}x${target.height}` : "model-safe JPEG";
+  const sourceText = source.width && source.height ? `${source.width}x${source.height}` : "unknown size";
+  logStage(`Normalized Telegram image ${fileName || "image"} from ${sourceText} to ${targetText}.`);
+  return new Blob([normalizedBytes], { type: "image/jpeg" });
+}
+
 async function probeVideoDuration(inputPath, fallbackDuration) {
   if (Number.isFinite(fallbackDuration) && fallbackDuration > 0) return fallbackDuration;
   try {
@@ -614,9 +697,18 @@ async function buildTelegramImageContent(message) {
 
   await sendAction(message.chat.id, "upload_photo");
   const file = await downloadTelegramFile(fileId, largest || document);
-  const dataUrl = await blobToDataUrl(
-    file.blob.type ? file.blob : new Blob([await file.blob.arrayBuffer()], { type: document?.mime_type || "image/jpeg" })
-  );
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "uvb-telegram-image-"));
+  let normalizedBlob;
+
+  try {
+    const imageBlob = file.blob.type
+      ? file.blob
+      : new Blob([await file.blob.arrayBuffer()], { type: document?.mime_type || "image/jpeg" });
+    normalizedBlob = await normalizeTelegramImageBlob(imageBlob, file.name || document?.file_name || "telegram-image.jpg", tempDir);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+  const dataUrl = await blobToDataUrl(normalizedBlob);
 
   return [
     { type: "text", text: prompt },
