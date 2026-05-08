@@ -64,6 +64,17 @@ const MODEL_IMAGE_JPEG_QUALITY = 0.86;
 const DEFAULT_IMAGE_PROMPT = "Describe this image in great detail.";
 const MAX_TEXT_DOCUMENT_BYTES = 512 * 1024;
 const MAX_TEXT_DOCUMENT_CHARS = 120_000;
+const IMAGE_FILE_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".avif",
+  ".heic",
+  ".heif",
+]);
 const TEXT_DOCUMENT_EXTENSIONS = new Set([
   ".txt",
   ".md",
@@ -217,6 +228,10 @@ function buildModelContent(text: string, attachments: ChatAttachment[] = []): Ch
 function getFileExtension(fileName: string) {
   const dotIndex = fileName.lastIndexOf(".");
   return dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : "";
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith("image/") || IMAGE_FILE_EXTENSIONS.has(getFileExtension(file.name));
 }
 
 function isTextDocument(file: File) {
@@ -2060,8 +2075,8 @@ export default function ChatInterface() {
     if (!files?.length) return;
 
     const selectedFiles = Array.from(files);
-    const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/"));
-    const otherFiles = selectedFiles.filter((file) => !file.type.startsWith("image/"));
+    const imageFiles = selectedFiles.filter(isImageFile);
+    const otherFiles = selectedFiles.filter((file) => !isImageFile(file));
 
     if (imageFiles.length) {
       const currentImageCount = pendingAttachments.filter(
@@ -2867,7 +2882,11 @@ export default function ChatInterface() {
                 />
                 <div className="absolute right-2 bottom-2 flex gap-1">
                   <button
-                    onClick={() => openAttachmentPicker("image/*")}
+                    onClick={() =>
+                      openAttachmentPicker(
+                        "image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif"
+                      )
+                    }
                     className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
                     title="Attach an image"
                     aria-label="Attach image"

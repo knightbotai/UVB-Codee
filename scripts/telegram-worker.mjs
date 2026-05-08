@@ -36,6 +36,27 @@ const telegramSttModel = (process.env.TELEGRAM_STT_MODEL ?? process.env.UVB_STT_
 const telegramSttLanguage = (process.env.TELEGRAM_STT_LANGUAGE ?? process.env.UVB_STT_LANGUAGE ?? "en").trim();
 const telegramSttResponseFormat = (process.env.TELEGRAM_STT_RESPONSE_FORMAT ?? process.env.UVB_STT_RESPONSE_FORMAT ?? "json").trim();
 const telegramSttTemperature = (process.env.TELEGRAM_STT_TEMPERATURE ?? process.env.UVB_STT_TEMPERATURE ?? "0").trim();
+const telegramSttVadFilter = (process.env.TELEGRAM_STT_VAD_FILTER ?? process.env.UVB_STT_VAD_FILTER ?? "true").trim();
+const telegramSttConditionOnPreviousText = (
+  process.env.TELEGRAM_STT_CONDITION_ON_PREVIOUS_TEXT ??
+  process.env.UVB_STT_CONDITION_ON_PREVIOUS_TEXT ??
+  "false"
+).trim();
+const telegramSttNoSpeechThreshold = (
+  process.env.TELEGRAM_STT_NO_SPEECH_THRESHOLD ??
+  process.env.UVB_STT_NO_SPEECH_THRESHOLD ??
+  "0.6"
+).trim();
+const telegramSttCompressionRatioThreshold = (
+  process.env.TELEGRAM_STT_COMPRESSION_RATIO_THRESHOLD ??
+  process.env.UVB_STT_COMPRESSION_RATIO_THRESHOLD ??
+  "2.4"
+).trim();
+const telegramSttLogProbThreshold = (
+  process.env.TELEGRAM_STT_LOG_PROB_THRESHOLD ??
+  process.env.UVB_STT_LOG_PROB_THRESHOLD ??
+  "-1.0"
+).trim();
 const telegramSttPrompt = (
   process.env.TELEGRAM_STT_PROMPT ??
   process.env.UVB_STT_PROMPT ??
@@ -84,6 +105,24 @@ function isAllowed(chatId) {
 
 function logStage(message) {
   console.log(`[uvb-telegram] ${new Date().toISOString()} ${message}`);
+}
+
+function cleanSttTranscript(text) {
+  let cleaned = String(text || "").trim();
+  const repeatedFunctionWordPattern =
+    /\b(you|i|we|he|she|they|it|the|a|an|and|to|of|for|with|that|this)\b[\s,.;:!?-]+\1\b/giu;
+  const repeatedPhrasePattern =
+    /\b([\p{L}\p{N}'-]+(?:\s+[\p{L}\p{N}'-]+){1,4})\b(?:[\s,.;:!?-]+\1\b)+/giu;
+  const repeatedTrailingWordPattern =
+    /\b([\p{L}\p{N}'-]+)\b(?:[\s,.;:!?-]+\1\b){2,}(?=[\s.?!]*$)/giu;
+
+  for (let index = 0; index < 3; index += 1) {
+    cleaned = cleaned
+      .replace(repeatedPhrasePattern, "$1")
+      .replace(repeatedTrailingWordPattern, "$1")
+      .replace(repeatedFunctionWordPattern, "$1");
+  }
+  return cleaned.replace(/\s{2,}/g, " ").trim();
 }
 
 function formatDuration(startedAt) {
@@ -748,6 +787,15 @@ async function transcribeAudioBlob(blob, fileName) {
   if (telegramSttPrompt) form.append("prompt", telegramSttPrompt);
   if (telegramSttResponseFormat) form.append("response_format", telegramSttResponseFormat);
   if (telegramSttTemperature) form.append("temperature", telegramSttTemperature);
+  if (telegramSttVadFilter) form.append("vad_filter", telegramSttVadFilter);
+  if (telegramSttConditionOnPreviousText) {
+    form.append("condition_on_previous_text", telegramSttConditionOnPreviousText);
+  }
+  if (telegramSttNoSpeechThreshold) form.append("no_speech_threshold", telegramSttNoSpeechThreshold);
+  if (telegramSttCompressionRatioThreshold) {
+    form.append("compression_ratio_threshold", telegramSttCompressionRatioThreshold);
+  }
+  if (telegramSttLogProbThreshold) form.append("log_prob_threshold", telegramSttLogProbThreshold);
   if (telegramSttHotwords) form.append("hotwords", telegramSttHotwords);
 
   const startedAt = Date.now();
@@ -763,7 +811,7 @@ async function transcribeAudioBlob(blob, fileName) {
   }
 
   logStage(`Telegram STT completed for ${fileName || "telegram-audio.mp3"} in ${formatDuration(startedAt)}.`);
-  return applyTelegramAliases(data.text);
+  return applyTelegramAliases(cleanSttTranscript(data.text));
 }
 
 async function buildTelegramVideoContent(message) {

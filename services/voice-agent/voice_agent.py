@@ -44,6 +44,15 @@ DEFAULT_VOICE_SETTINGS = {
     ),
     "sttResponseFormat": os.getenv("UVB_STT_RESPONSE_FORMAT", "json"),
     "sttTemperature": os.getenv("UVB_STT_TEMPERATURE", "0"),
+    "sttVadFilter": os.getenv("UVB_STT_VAD_FILTER", "true"),
+    "sttConditionOnPreviousText": os.getenv(
+        "UVB_STT_CONDITION_ON_PREVIOUS_TEXT", "false"
+    ),
+    "sttNoSpeechThreshold": os.getenv("UVB_STT_NO_SPEECH_THRESHOLD", "0.6"),
+    "sttCompressionRatioThreshold": os.getenv(
+        "UVB_STT_COMPRESSION_RATIO_THRESHOLD", "2.4"
+    ),
+    "sttLogProbThreshold": os.getenv("UVB_STT_LOG_PROB_THRESHOLD", "-1.0"),
     "sttHotwords": os.getenv("UVB_STT_HOTWORDS", ""),
     "ttsUrl": os.getenv("UVB_TTS_URL", "http://127.0.0.1:8880/v1/audio/speech"),
     "ttsVoice": os.getenv("UVB_TTS_VOICE", "af_nova"),
@@ -97,6 +106,36 @@ def sanitize_text_for_speech(text: str) -> str:
     cleaned = re.sub(r"(?m)^\s*[-*+]\s+", "", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+def clean_stt_transcript(text: str) -> str:
+    cleaned = text.strip()
+    repeated_function_word_pattern = (
+        r"\b(you|i|we|he|she|they|it|the|a|an|and|to|of|for|with|that|this)"
+        r"\b[\s,.;:!?-]+\1\b"
+    )
+    repeated_phrase_pattern = (
+        r"\b([\w'-]+(?:\s+[\w'-]+){1,4})\b(?:[\s,.;:!?-]+\1\b)+"
+    )
+    repeated_trailing_word_pattern = (
+        r"\b([\w'-]+)\b(?:[\s,.;:!?-]+\1\b){2,}(?=[\s.?!]*$)"
+    )
+
+    for _ in range(3):
+        cleaned = re.sub(repeated_phrase_pattern, r"\1", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            repeated_trailing_word_pattern,
+            r"\1",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            repeated_function_word_pattern,
+            r"\1",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
 def apply_text_aliases(text: str) -> str:
@@ -158,6 +197,11 @@ async def transcribe_audio(audio_bytes: bytes, voice_settings: dict[str, Any]) -
             ("prompt", "sttPrompt"),
             ("response_format", "sttResponseFormat"),
             ("temperature", "sttTemperature"),
+            ("vad_filter", "sttVadFilter"),
+            ("condition_on_previous_text", "sttConditionOnPreviousText"),
+            ("no_speech_threshold", "sttNoSpeechThreshold"),
+            ("compression_ratio_threshold", "sttCompressionRatioThreshold"),
+            ("log_prob_threshold", "sttLogProbThreshold"),
             ("hotwords", "sttHotwords"),
         ):
             value = str(voice_settings.get(settings_key) or DEFAULT_VOICE_SETTINGS[settings_key]).strip()
@@ -170,7 +214,7 @@ async def transcribe_audio(audio_bytes: bytes, voice_settings: dict[str, Any]) -
                 if response.status >= 400:
                     raise RuntimeError(f"STT returned {response.status}: {raw}")
                 data = json.loads(raw) if raw else {}
-                text = str(data.get("text") or "").strip()
+                text = clean_stt_transcript(str(data.get("text") or ""))
                 if not text:
                     raise RuntimeError("STT returned an empty transcript.")
                 return text, now_ms() - started
