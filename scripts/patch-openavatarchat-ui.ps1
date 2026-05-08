@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $frontendRoot = Join-Path $repoRoot ".uvb\avatar-engines\OpenAvatarChat\src\service\frontend_service\frontend"
+$engineRoot = Join-Path $repoRoot ".uvb\avatar-engines\OpenAvatarChat"
 
 if (-not (Test-Path $frontendRoot)) {
   throw "OpenAvatarChat frontend was not found at $frontendRoot. Run bun run avatar:bootstrap first."
@@ -51,3 +52,15 @@ if (Test-Path $indexHtml) {
 }
 
 Write-Host "Patched $patched OpenAvatarChat frontend file(s)."
+
+$llmHandler = Join-Path $engineRoot "src\handlers\llm\openai_compatible\llm_handler_openai_compatible.py"
+if (Test-Path $llmHandler) {
+  $content = Get-Content -LiteralPath $llmHandler -Raw
+  $next = $content -replace "timeout=5\.0,\s*#.*", "timeout=120.0,  # UVB local models can take longer to prefill or stream."
+  if ($next -ne $content) {
+    Set-Content -LiteralPath $llmHandler -Value $next -NoNewline
+    Write-Host "Patched OpenAvatarChat local LLM timeout to 120 seconds."
+  } else {
+    Write-Host "OpenAvatarChat local LLM timeout already patched or not found."
+  }
+}
