@@ -3,9 +3,17 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $frontendRoot = Join-Path $repoRoot ".uvb\avatar-engines\OpenAvatarChat\src\service\frontend_service\frontend"
 $engineRoot = Join-Path $repoRoot ".uvb\avatar-engines\OpenAvatarChat"
+$uvbKokoroHandlerTemplate = Join-Path $repoRoot "services\avatar\handlers\tts_handler_uvb_kokoro.py"
+$uvbKokoroHandlerTarget = Join-Path $engineRoot "src\handlers\tts\uvb_kokoro\tts_handler_uvb_kokoro.py"
 
 if (-not (Test-Path $frontendRoot)) {
   throw "OpenAvatarChat frontend was not found at $frontendRoot. Run bun run avatar:bootstrap first."
+}
+
+if (Test-Path $uvbKokoroHandlerTemplate) {
+  New-Item -ItemType Directory -Force -Path (Split-Path $uvbKokoroHandlerTarget) | Out-Null
+  Copy-Item -LiteralPath $uvbKokoroHandlerTemplate -Destination $uvbKokoroHandlerTarget -Force
+  Write-Host "Installed UVB Kokoro TTS handler for OpenAvatarChat."
 }
 
 $replacements = @{
