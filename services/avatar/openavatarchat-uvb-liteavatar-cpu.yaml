@@ -8,7 +8,7 @@ default:
     cert_key: "ssl_certs/localhost.key"
   chat_engine:
     model_root: "models"
-    concurrent_limit: 2
+    concurrent_limit: 1
     handler_search_path:
       - "src/handlers"
     handler_configs:
@@ -46,8 +46,10 @@ default:
         api_url: "http://127.0.0.1:8003/v1"
       LiteAvatar:
         module: avatar/liteavatar/avatar_handler_liteavatar
+        concurrent_limit: 1
         avatar_name: 20250408/sample_data
-        fps: 25
+        fps: 15
         debug: false
-        enable_fast_mode: false
+        enable_fast_mode: true
         use_gpu: false
+        stop_ack_timeout: 2

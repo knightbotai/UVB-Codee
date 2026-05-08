@@ -19,6 +19,7 @@ if (Test-Path $uvbKokoroHandlerTemplate) {
 $replacements = @{
   "点击允许访问摄像头和麦克风" = "Click to allow camera and microphone access"
   "点击开始对话" = "Click to start conversation"
+  "等待中" = "Waiting"
 }
 
 $targets = @(
@@ -65,10 +66,15 @@ $llmHandler = Join-Path $engineRoot "src\handlers\llm\openai_compatible\llm_hand
 if (Test-Path $llmHandler) {
   $content = Get-Content -LiteralPath $llmHandler -Raw
   $next = $content -replace "timeout=5\.0,\s*#.*", "timeout=120.0,  # UVB local models can take longer to prefill or stream."
+  $next = $next -replace ",\r?\n\s*chat_template_kwargs=\{`"enable_thinking`": False\}", ""
+  if ($next -notmatch "extra_body=\{`"chat_template_kwargs`": \{`"enable_thinking`": False\}\}") {
+    $next = $next -replace "stream_options=\{`"include_usage`": True\}(\r?\n\s*\))", "stream_options={`"include_usage`": True},`r`n                extra_body={`"chat_template_kwargs`": {`"enable_thinking`": False}}`$1"
+  }
+  $next = $next.Replace('error_text = f"连接错误: {e}"', 'error_text = f"Connection error: {e}"')
   if ($next -ne $content) {
     Set-Content -LiteralPath $llmHandler -Value $next -NoNewline
-    Write-Host "Patched OpenAvatarChat local LLM timeout to 120 seconds."
+    Write-Host "Patched OpenAvatarChat local LLM timeout/thinking mode."
   } else {
-    Write-Host "OpenAvatarChat local LLM timeout already patched or not found."
+    Write-Host "OpenAvatarChat local LLM timeout/thinking mode already patched or not found."
   }
 }

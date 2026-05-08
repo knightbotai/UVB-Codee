@@ -63,11 +63,11 @@ class HandlerTTS(HandlerBase):
     def start_context(self, session_context, context: HandlerContext):
         pass
 
-    def filter_text(self, text: str) -> str:
+    def filter_text(self, text: str, *, final: bool = False) -> str:
         text = re.sub(r"<\|.*?\|>", "", text)
         text = re.sub(r"[*_`#>\[\]{}]", "", text)
         text = re.sub(r"\s+", " ", text)
-        return text.strip()
+        return text.strip() if final else text
 
     def synthesize(self, text: str) -> np.ndarray:
         payload = json.dumps({"input": text, "voice": self.voice}).encode("utf-8")
@@ -82,14 +82,14 @@ class HandlerTTS(HandlerBase):
         audio, _ = librosa.load(io.BytesIO(audio_bytes), sr=self.sample_rate, mono=True)
         return audio[np.newaxis, ...]
 
-    def submit_sentence(self, sentence: str, output_definition):
-        sentence = self.filter_text(sentence)
+    def submit_sentence(self, context: TTSContext, sentence: str, output_definition):
+        sentence = self.filter_text(sentence, final=True)
         if not sentence:
             return
         logger.info(f"uvb kokoro sentence: {sentence}")
         output = DataBundle(output_definition)
         output.set_main_data(self.synthesize(sentence))
-        self.submit_data(output)
+        context.submit_data(output)
 
     def handle(self, context: HandlerContext, inputs: ChatData, output_definitions: Dict[ChatDataType, HandlerDataInfo]):
         output_definition = output_definitions.get(ChatDataType.AVATAR_AUDIO).definition
@@ -108,14 +108,14 @@ class HandlerTTS(HandlerBase):
                 return
             complete, context.input_text = parts[:-1], parts[-1]
             for sentence in complete:
-                self.submit_sentence(sentence, output_definition)
+                self.submit_sentence(context, sentence, output_definition)
             return
 
-        self.submit_sentence(context.input_text, output_definition)
+        self.submit_sentence(context, context.input_text, output_definition)
         context.input_text = ""
         output = DataBundle(output_definition)
         output.set_main_data(np.zeros(shape=(1, 240), dtype=np.float32))
-        self.submit_data(output, finish_stream=True)
+        context.submit_data(output, finish_stream=True)
         logger.info("uvb kokoro speech end")
 
     def destroy_context(self, context: HandlerContext):

@@ -44,16 +44,9 @@ if ($NoStart) {
   exit 0
 }
 
-$existing = Get-CimInstance Win32_Process |
-  Where-Object {
-    $_.CommandLine -like "*src/demo.py*" -and
-    $_.CommandLine -like "*openavatarchat-uvb-liteavatar-cpu.yaml*"
-  }
-
-if ($existing) {
-  $existing | ForEach-Object {
-    Write-Host "OpenAvatarChat LiteAvatar already appears to be running as PID $($_.ProcessId)."
-  }
+$existingPort = (& netstat -ano | Select-String -Pattern "127\.0\.0\.1:8283\s+.*LISTENING")
+if ($existingPort) {
+  Write-Host "OpenAvatarChat LiteAvatar already appears to be listening on 127.0.0.1:8283."
   exit 0
 }
 
