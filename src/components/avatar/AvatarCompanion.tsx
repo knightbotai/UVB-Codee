@@ -344,7 +344,7 @@ export default function AvatarCompanion() {
       : avatarAssetUrl !== DEFAULT_SOPHIA_AVATAR_ASSET_URL && failedAssetUrl !== DEFAULT_SOPHIA_AVATAR_ASSET_URL
         ? DEFAULT_SOPHIA_AVATAR_ASSET_URL
         : "";
-  const usesDefaultStyleSheet = visibleAssetUrl === DEFAULT_SOPHIA_AVATAR_ASSET_URL;
+  const usesStyleSheetCrop = visibleAssetUrl.includes("sophia-knight-pixar.png");
   const position = customPosition
     ? clampPoint(customPosition, settings.size)
     : presetToPoint(settings.position, settings.size);
@@ -408,7 +408,7 @@ export default function AvatarCompanion() {
         {visibleAssetUrl ? (
           <AvatarPortraitStage
             assetUrl={visibleAssetUrl}
-            isStyleSheet={usesDefaultStyleSheet}
+            isStyleSheet={usesStyleSheetCrop}
             activity={avatarActivity}
             mood={effectiveMood}
             color={effectiveColor}
