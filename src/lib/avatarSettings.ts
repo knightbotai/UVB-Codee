@@ -16,6 +16,7 @@ export interface AvatarSettings {
   size: number;
   opacity: number;
   position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
+  customPosition: { x: number; y: number } | null;
   reactToVoice: boolean;
   reactToChat: boolean;
   reactToSystem: boolean;
@@ -33,6 +34,7 @@ export const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
   size: 112,
   opacity: 0.92,
   position: "bottom-right",
+  customPosition: null,
   reactToVoice: true,
   reactToChat: true,
   reactToSystem: true,
@@ -75,6 +77,15 @@ export function normalizeAvatarSettings(settings: Partial<AvatarSettings> = {}):
     settings.position === "top-left"
       ? settings.position
       : "bottom-right";
+  const customPosition =
+    settings.customPosition &&
+    Number.isFinite(Number(settings.customPosition.x)) &&
+    Number.isFinite(Number(settings.customPosition.y))
+      ? {
+          x: safeNumber(settings.customPosition.x, 24, 0, 10000),
+          y: safeNumber(settings.customPosition.y, 24, 0, 10000),
+        }
+      : null;
 
   return {
     enabled: typeof settings.enabled === "boolean" ? settings.enabled : DEFAULT_AVATAR_SETTINGS.enabled,
@@ -86,6 +97,7 @@ export function normalizeAvatarSettings(settings: Partial<AvatarSettings> = {}):
     size: safeNumber(settings.size, DEFAULT_AVATAR_SETTINGS.size, 56, 260),
     opacity: safeNumber(settings.opacity, DEFAULT_AVATAR_SETTINGS.opacity, 0.2, 1),
     position,
+    customPosition,
     reactToVoice: typeof settings.reactToVoice === "boolean" ? settings.reactToVoice : true,
     reactToChat: typeof settings.reactToChat === "boolean" ? settings.reactToChat : true,
     reactToSystem: typeof settings.reactToSystem === "boolean" ? settings.reactToSystem : true,

@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import Image from "next/image";
+import { useAppStore, type ChatMessage } from "@/stores/appStore";
 import {
   AVATAR_SETTINGS_UPDATED_EVENT,
   loadAvatarSettings,
+  saveAvatarSettings,
   type AvatarMood,
   type AvatarSettings,
 } from "@/lib/avatarSettings";
@@ -12,24 +15,163 @@ import {
 const MOOD_COLORS: Record<AvatarMood, string> = {
   idle: "#39ff14",
   listening: "#4a6fa5",
-  thinking: "#6b1fa0",
+  thinking: "#9b5cff",
   speaking: "#f5a623",
   celebrating: "#ff6b35",
   alert: "#ef4444",
 };
 
-const POSITION_CLASSES: Record<AvatarSettings["position"], string> = {
-  "bottom-right": "bottom-5 right-5",
-  "bottom-left": "bottom-5 left-5",
-  "top-right": "top-20 right-5",
-  "top-left": "top-20 left-5",
+const POSITION_OFFSETS: Record<AvatarSettings["position"], { left?: number; right?: number; top?: number; bottom?: number }> = {
+  "bottom-right": { right: 20, bottom: 20 },
+  "bottom-left": { left: 20, bottom: 20 },
+  "top-right": { right: 20, top: 88 },
+  "top-left": { left: 20, top: 88 },
 };
+
+const CHAT_REACTION_MS = 14_000;
+const AVATAR_POSITION_PADDING = 12;
+
+type Point = { x: number; y: number };
+
+function clampPoint(point: Point, size: number): Point {
+  if (typeof window === "undefined") return point;
+  const width = Math.max(160, size + 52);
+  const height = size + 58;
+  return {
+    x: Math.min(
+      Math.max(AVATAR_POSITION_PADDING, point.x),
+      Math.max(AVATAR_POSITION_PADDING, window.innerWidth - width - AVATAR_POSITION_PADDING)
+    ),
+    y: Math.min(
+      Math.max(AVATAR_POSITION_PADDING, point.y),
+      Math.max(AVATAR_POSITION_PADDING, window.innerHeight - height - AVATAR_POSITION_PADDING)
+    ),
+  };
+}
+
+function presetToPoint(position: AvatarSettings["position"], size: number): Point {
+  if (typeof window === "undefined") return { x: 20, y: 20 };
+  const offsets = POSITION_OFFSETS[position];
+  const width = Math.max(160, size + 52);
+  const height = size + 58;
+  return clampPoint(
+    {
+      x: offsets.left ?? window.innerWidth - width - (offsets.right ?? 20),
+      y: offsets.top ?? window.innerHeight - height - (offsets.bottom ?? 20),
+    },
+    size
+  );
+}
+
+function getLatestMessage(messages: ChatMessage[]) {
+  return messages.reduce<ChatMessage | null>((latest, message) => {
+    if (!latest || message.timestamp > latest.timestamp) return message;
+    return latest;
+  }, null);
+}
+
+function moodFromActivity(
+  settings: AvatarSettings,
+  latestMessage: ChatMessage | null,
+  isVoiceActive: boolean,
+  isRecording: boolean,
+  now: number
+): AvatarMood {
+  if (settings.reactToVoice && (isRecording || isVoiceActive)) return "listening";
+  if (!settings.reactToChat || !latestMessage) return settings.mood;
+
+  const age = now - latestMessage.timestamp;
+  if (age > CHAT_REACTION_MS) return settings.mood;
+  if (latestMessage.role === "user") return "thinking";
+  if (latestMessage.role === "assistant") {
+    const content = latestMessage.content.toLowerCase();
+    return /great|yes|love|beautiful|excellent|perfect|wonderful|amazing|!/.test(content)
+      ? "celebrating"
+      : "speaking";
+  }
+  return settings.mood;
+}
+
+function SophiaFigure({ mood, color, size }: { mood: AvatarMood; color: string; size: number }) {
+  const isCelebrating = mood === "celebrating";
+  const isThinking = mood === "thinking";
+  const isListening = mood === "listening";
+  const isSpeaking = mood === "speaking";
+  const scale = size / 112;
+
+  return (
+    <motion.div
+      className="relative overflow-hidden rounded-[26px] border border-white/15 bg-[radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.22),rgba(9,16,24,0.94)_58%,rgba(4,7,12,0.98))] shadow-2xl backdrop-blur-md"
+      style={{
+        width: size,
+        height: size,
+        boxShadow: `0 0 ${Math.round(30 * scale)}px ${color}55`,
+      }}
+      animate={{ y: isSpeaking ? [0, -2, 0] : [0, -1, 0] }}
+      transition={{ duration: isSpeaking ? 0.9 : 3.2, repeat: Infinity, ease: "easeInOut" }}
+    >
+      <div className="absolute inset-x-4 bottom-1 rounded-full bg-black/40 blur-md" style={{ height: 10 * scale }} />
+      <motion.div
+        className="absolute left-1/2 top-[12%]"
+        style={{ width: 56 * scale, height: 86 * scale, x: "-50%" }}
+        animate={{ rotate: isThinking ? [-2, 2, -1] : isListening ? [1, -1, 1] : [0, 1, 0] }}
+        transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <div className="absolute left-1/2 top-[38%] h-[42%] w-[46%] -translate-x-1/2 rounded-t-[42%] rounded-b-[32%] border border-white/15 bg-[linear-gradient(180deg,#1c2a35,#07090f)] shadow-lg" />
+        <motion.div
+          className="absolute left-[16%] top-[45%] h-[34%] w-[12%] origin-top rounded-full border border-white/10 bg-[#caa37e]"
+          animate={{ rotate: isCelebrating ? [-132, -112, -132] : isSpeaking ? [-24, -48, -24] : -16 }}
+          transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <motion.div
+          className="absolute right-[16%] top-[45%] h-[34%] w-[12%] origin-top rounded-full border border-white/10 bg-[#caa37e]"
+          animate={{ rotate: isCelebrating ? [132, 112, 132] : isSpeaking ? [24, 48, 24] : 16 }}
+          transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <div className="absolute left-1/2 top-[6%] h-[44%] w-[64%] -translate-x-1/2 rounded-[44%] bg-[linear-gradient(135deg,#4b342d,#8a684d_44%,#2b1d1a)] shadow-xl" />
+        <div className="absolute left-[11%] top-[17%] h-[52%] w-[20%] rotate-[-12deg] rounded-full bg-[#4a3029]" />
+        <div className="absolute right-[11%] top-[17%] h-[52%] w-[20%] rotate-[12deg] rounded-full bg-[#6f503c]" />
+        <div className="absolute left-1/2 top-[14%] h-[36%] w-[50%] -translate-x-1/2 rounded-[46%] border border-white/25 bg-[#d8b28c]" />
+        <div className="absolute left-[33%] top-[28%] h-[4%] w-[6%] rounded-full bg-[#9ed8ff]" />
+        <div className="absolute right-[33%] top-[28%] h-[4%] w-[6%] rounded-full bg-[#9ed8ff]" />
+        <motion.div
+          className="absolute left-1/2 top-[38%] h-[4%] w-[18%] -translate-x-1/2 rounded-full bg-[#8f4f4f]"
+          animate={{
+            scaleX: isSpeaking ? [0.7, 1.2, 0.75] : isCelebrating ? 1.25 : 0.8,
+            y: isThinking ? [0, 1, 0] : 0,
+          }}
+          transition={{ duration: 0.42, repeat: isSpeaking ? Infinity : 0 }}
+        />
+      </motion.div>
+      <motion.div
+        className="absolute bottom-3 left-1/2 h-2.5 -translate-x-1/2 rounded-full"
+        style={{ width: size * 0.42, backgroundColor: color }}
+        animate={{ opacity: [0.25, 0.85, 0.25], scaleX: isListening ? [0.8, 1.12, 0.8] : 1 }}
+        transition={{ duration: isListening ? 0.8 : 2.6, repeat: Infinity }}
+      />
+    </motion.div>
+  );
+}
 
 export default function AvatarCompanion() {
   const [settings, setSettings] = useState<AvatarSettings>(() => loadAvatarSettings());
+  const [now, setNow] = useState(() => Date.now());
+  const activeThreadId = useAppStore((state) => state.activeThreadId);
+  const threads = useAppStore((state) => state.threads);
+  const isRecording = useAppStore((state) => state.isRecording);
+  const isVoiceActive = useAppStore((state) => state.isVoiceActive);
+  const dragOffsetRef = useRef<Point>({ x: 0, y: 0 });
+  const dragPositionRef = useRef<Point | null>(settings.customPosition);
+  const [dragging, setDragging] = useState(false);
+  const [customPosition, setCustomPosition] = useState<Point | null>(() => settings.customPosition);
 
   useEffect(() => {
-    const refresh = () => setSettings(loadAvatarSettings());
+    const refresh = () => {
+      const nextSettings = loadAvatarSettings();
+      setSettings(nextSettings);
+      setCustomPosition(nextSettings.customPosition);
+      dragPositionRef.current = nextSettings.customPosition;
+    };
     window.addEventListener(AVATAR_SETTINGS_UPDATED_EVENT, refresh);
     window.addEventListener("storage", refresh);
     return () => {
@@ -38,54 +180,106 @@ export default function AvatarCompanion() {
     };
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const latestMessage = useMemo(() => {
+    const activeThread = threads.find((thread) => thread.id === activeThreadId);
+    return activeThread ? getLatestMessage(activeThread.messages) : null;
+  }, [activeThreadId, threads]);
+
   if (!settings.enabled || settings.mode !== "browser-overlay") return null;
 
   const color = MOOD_COLORS[settings.mood];
-  const pulse = settings.mood === "speaking" || settings.mood === "listening";
+  const effectiveMood = moodFromActivity(settings, latestMessage, isVoiceActive, isRecording, now);
+  const effectiveColor = MOOD_COLORS[effectiveMood];
+  const position = customPosition
+    ? clampPoint(customPosition, settings.size)
+    : presetToPoint(settings.position, settings.size);
+
+  const savePosition = (point: Point) => {
+    const nextSettings = { ...settings, customPosition: point };
+    setSettings(nextSettings);
+    saveAvatarSettings(nextSettings);
+  };
 
   return (
-    <div
-      className={`pointer-events-none fixed z-50 ${POSITION_CLASSES[settings.position]}`}
-      style={{ opacity: settings.opacity }}
-      aria-hidden="true"
+    <motion.div
+      className="fixed z-50 select-none"
+      style={{ left: position.x, top: position.y, opacity: settings.opacity }}
+      initial={{ opacity: 0, scale: 0.92 }}
+      animate={{ opacity: settings.opacity, scale: dragging ? 1.03 : 1 }}
+      transition={{ duration: 0.18 }}
     >
       <div className="relative flex flex-col items-center gap-2">
-        <div
-          className={`relative rounded-full border border-white/15 bg-black/50 shadow-2xl backdrop-blur-md ${
-            pulse ? "animate-pulse" : ""
-          }`}
-          style={{
-            width: settings.size,
-            height: settings.size,
-            boxShadow: `0 0 30px ${color}55`,
+        <button
+          type="button"
+          className="flex cursor-grab items-center gap-1 rounded-full border border-white/10 bg-black/50 px-2.5 py-1 text-[10px] uppercase tracking-wider text-white/75 shadow-lg backdrop-blur-md active:cursor-grabbing"
+          title="Drag Sophia"
+          aria-label="Drag Sophia avatar"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            dragOffsetRef.current = {
+              x: event.clientX - position.x,
+              y: event.clientY - position.y,
+            };
+            setDragging(true);
+          }}
+          onPointerMove={(event) => {
+            if (!dragging) return;
+            const next = clampPoint(
+              {
+                x: event.clientX - dragOffsetRef.current.x,
+                y: event.clientY - dragOffsetRef.current.y,
+              },
+              settings.size
+            );
+            setCustomPosition(next);
+            dragPositionRef.current = next;
+          }}
+          onPointerUp={(event) => {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+            setDragging(false);
+            savePosition(dragPositionRef.current ?? position);
+          }}
+          onPointerCancel={() => setDragging(false)}
+          onDoubleClick={() => {
+            const nextSettings = { ...settings, customPosition: null };
+            setCustomPosition(null);
+            setSettings(nextSettings);
+            saveAvatarSettings(nextSettings);
           }}
         >
-          {settings.assetUrl && settings.style !== "orb" ? (
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: effectiveColor }} />
+          drag
+        </button>
+        {settings.assetUrl && settings.style !== "orb" ? (
+          <div
+            className="overflow-hidden rounded-[26px] border border-white/15 bg-black/50 shadow-2xl backdrop-blur-md"
+            style={{
+              width: settings.size,
+              height: settings.size,
+              boxShadow: `0 0 30px ${color}55`,
+            }}
+          >
             <Image
               src={settings.assetUrl}
               alt=""
               width={settings.size}
               height={settings.size}
               unoptimized
-              className="h-full w-full rounded-full object-cover"
+              className="h-full w-full object-cover"
             />
-          ) : (
-            <div
-              className="h-full w-full rounded-full"
-              style={{
-                background: `radial-gradient(circle at 35% 25%, #ffffffcc 0%, ${color} 18%, #102020 58%, #05080d 100%)`,
-              }}
-            />
-          )}
-          <span
-            className="absolute -right-1 bottom-3 h-4 w-4 rounded-full border border-black/40"
-            style={{ backgroundColor: color }}
-          />
-        </div>
-        <div className="rounded-full border border-white/10 bg-black/45 px-3 py-1 text-[10px] uppercase tracking-wider text-white/80 backdrop-blur-md">
-          {settings.displayName} · {settings.mood}
+          </div>
+        ) : (
+          <SophiaFigure mood={effectiveMood} color={effectiveColor} size={settings.size} />
+        )}
+        <div className="rounded-full border border-white/10 bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wider text-white/80 shadow-lg backdrop-blur-md">
+          {settings.displayName} · {effectiveMood}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }

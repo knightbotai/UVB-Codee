@@ -23,7 +23,7 @@ if ($BuildFirst) {
   bun run build
 }
 
-function Start-HiddenPwsh {
+function Start-HiddenCommand {
   param(
     [Parameter(Mandatory = $true)] [string] $Name,
     [Parameter(Mandatory = $true)] [string] $Command
@@ -31,26 +31,24 @@ function Start-HiddenPwsh {
 
   $outPath = Join-Path $LogDir "$Name.out.log"
   $errPath = Join-Path $LogDir "$Name.err.log"
-  $arguments = @(
-    "-NoLogo",
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    $Command
-  )
+  $escapedRoot = $Root.Replace('"', '\"')
+  $escapedOut = $outPath.Replace('"', '\"')
+  $escapedErr = $errPath.Replace('"', '\"')
+  $cmdLine = "cd /d `"$escapedRoot`" && $Command >> `"$escapedOut`" 2>> `"$escapedErr`""
 
-  Start-Process pwsh `
-    -ArgumentList $arguments `
-    -WorkingDirectory $Root `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $outPath `
-    -RedirectStandardError $errPath | Out-Null
+  $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+  $startInfo.FileName = "$env:SystemRoot\System32\cmd.exe"
+  $startInfo.Arguments = "/d /s /c `"$cmdLine`""
+  $startInfo.WorkingDirectory = $Root
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+
+  [System.Diagnostics.Process]::Start($startInfo) | Out-Null
 }
 
-Start-HiddenPwsh `
+Start-HiddenCommand `
   -Name "next-3010" `
-  -Command "Set-Location '$Root'; bun run dev -- --port $Port"
+  -Command "bun run dev -- --port $Port"
 
 if (-not $SkipVoiceAgent) {
   $pythonCommand = $null
@@ -62,9 +60,9 @@ if (-not $SkipVoiceAgent) {
 
   if ($pythonCommand) {
     $voiceAgentPath = Join-Path $Root "services\voice-agent\voice_agent.py"
-    Start-HiddenPwsh `
+    Start-HiddenCommand `
       -Name "voice-agent" `
-      -Command "Set-Location '$Root'; $pythonCommand '$voiceAgentPath'"
+      -Command "$pythonCommand `"$voiceAgentPath`""
   } else {
     Write-Warning "Python was not found. UVB launched without the live voice sidecar."
   }
@@ -74,18 +72,18 @@ if (-not $SkipPipecat) {
   $pipecatPython = Join-Path $Root ".venv-pipecat\Scripts\python.exe"
   if (Test-Path $pipecatPython) {
     $pipecatAgentPath = Join-Path $Root "services\voice-agent\pipecat_agent.py"
-    Start-HiddenPwsh `
+    Start-HiddenCommand `
       -Name "pipecat-agent" `
-      -Command "Set-Location '$Root'; '$pipecatPython' '$pipecatAgentPath'"
+      -Command "`"$pipecatPython`" `"$pipecatAgentPath`""
   } else {
     Write-Warning "Pipecat venv was not found at $pipecatPython. Run: py -3.11 -m venv .venv-pipecat; .\.venv-pipecat\Scripts\python.exe -m pip install -r services\voice-agent\requirements-pipecat.txt"
   }
 }
 
 if (-not $SkipTelegram) {
-  Start-HiddenPwsh `
+  Start-HiddenCommand `
     -Name "telegram-worker" `
-    -Command "Set-Location '$Root'; bun run telegram"
+    -Command "bun run telegram"
 }
 
 Start-Sleep -Seconds 3

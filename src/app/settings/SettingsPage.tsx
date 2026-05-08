@@ -2481,7 +2481,10 @@ export default function SettingsPage() {
                       <select
                         value={avatarSettings.position}
                         onChange={(event) =>
-                          updateAvatarSettings({ position: event.target.value as AvatarSettings["position"] })
+                          updateAvatarSettings({
+                            position: event.target.value as AvatarSettings["position"],
+                            customPosition: null,
+                          })
                         }
                         className="input-field"
                       >
@@ -2490,6 +2493,9 @@ export default function SettingsPage() {
                         <option value="top-right">Top right</option>
                         <option value="top-left">Top left</option>
                       </select>
+                      <p className="mt-1 text-[11px] text-uvb-text-muted">
+                        Drag the overlay handle to place Sophia manually; double-click the handle to return here.
+                      </p>
                     </div>
                     <div>
                       <label className="mb-1.5 block text-xs text-uvb-text-muted">
