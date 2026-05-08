@@ -9,6 +9,7 @@
     "telegram": "node scripts/telegram-worker.mjs",
     "voice:bootstrap": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-voice-stack.ps1 -SkipExisting",
     "avatar:bootstrap": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-avatar-engines.ps1",
+    "avatar:patch-ui": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/patch-openavatarchat-ui.ps1",
     "avatar:openavatarchat": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/start-openavatarchat-liteavatar.ps1",
     "watch:tzutil": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/start-tzutil-watch.ps1",
     "vllm:local-media": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/restart-vllm-local-media.ps1",

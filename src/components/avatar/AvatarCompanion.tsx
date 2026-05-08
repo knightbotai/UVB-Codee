@@ -330,6 +330,7 @@ function ExternalAvatarRuntime({
   onCollapse: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
+  const [showPermissionHint, setShowPermissionHint] = useState(true);
   const runtimeUrl = runtimeUrlForSettings(settings);
   const safeGlowIntensity = Math.min(1.25, Math.max(0, glowIntensity));
   const frameWidth = Math.round(
@@ -413,6 +414,22 @@ function ExternalAvatarRuntime({
               referrerPolicy="no-referrer"
               onLoad={() => setLoaded(true)}
             />
+            {showPermissionHint && (
+              <button
+                type="button"
+                onClick={() => setShowPermissionHint(false)}
+                className="pointer-events-auto absolute inset-x-4 bottom-4 rounded-2xl border border-white/12 bg-black/78 px-4 py-3 text-left shadow-2xl backdrop-blur-xl transition-colors hover:border-white/22"
+                title="Dismiss avatar permission hint"
+              >
+                <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-white/78">
+                  First run setup
+                </span>
+                <span className="mt-1 block text-[11px] leading-relaxed text-white/55">
+                  Click the camera prompt inside this frame and allow camera/microphone access to start the live
+                  avatar. Tap this hint to dismiss it.
+                </span>
+              </button>
+            )}
           </>
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center">

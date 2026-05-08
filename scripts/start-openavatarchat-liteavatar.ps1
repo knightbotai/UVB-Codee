@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $engineRoot = Join-Path $repoRoot ".uvb\avatar-engines\OpenAvatarChat"
 $configPath = Join-Path $repoRoot "services\avatar\openavatarchat-uvb-liteavatar-cpu.yaml"
+$uiPatchScript = Join-Path $repoRoot "scripts\patch-openavatarchat-ui.ps1"
 $logDir = Join-Path $repoRoot ".uvb\logs"
 $outLog = Join-Path $logDir "openavatarchat.out.log"
 $errLog = Join-Path $logDir "openavatarchat.err.log"
@@ -21,6 +22,10 @@ if (-not (Test-Path $configPath)) {
 }
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+
+if (Test-Path $uiPatchScript) {
+  & $uiPatchScript | Out-Host
+}
 
 $venvScripts = Join-Path $engineRoot ".venv\Scripts"
 $avLibs = Join-Path $engineRoot ".venv\Lib\site-packages\av.libs"
@@ -56,12 +61,14 @@ Clear-Content $outLog, $errLog -ErrorAction SilentlyContinue
 
 if ($Foreground) {
   $env:PATH = "$venvScripts;$env:PATH"
+  $env:PYTHONUTF8 = "1"
+  $env:PYTHONIOENCODING = "utf-8"
   Set-Location $engineRoot
   uv run src/demo.py --config $configPath
   exit $LASTEXITCODE
 }
 
-$command = "`$env:PATH='$venvScripts;'+`$env:PATH; cd '$engineRoot'; uv run src/demo.py --config '$configPath' >> '$outLog' 2>> '$errLog'"
+$command = "`$env:PATH='$venvScripts;'+`$env:PATH; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; cd '$engineRoot'; uv run src/demo.py --config '$configPath' >> '$outLog' 2>> '$errLog'"
 $process = Start-Process -FilePath "powershell.exe" `
   -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $command) `
   -WorkingDirectory $engineRoot `
