@@ -64,4 +64,6 @@ bun run avatar:openavatarchat
 
 The launcher copies PyAV's bundled Opus DLL into the virtualenv script directory so `opuslib` can resolve it on Windows, starts OpenAvatarChat hidden, and writes logs to `.uvb/logs/openavatarchat.out.log` and `.uvb/logs/openavatarchat.err.log`. When healthy, the sidecar serves the OpenAvatarChat frontend at `http://127.0.0.1:8283`.
 
-The practical integration path is to let UVB remain the source of truth for identity, memory, Telegram, STT, LLM, and Kokoro, then use OpenAvatarChat/LiteAvatar as a local visual renderer once we have its WebRTC/video surface stable.
+In UVB, set Settings -> Interface -> Sophia Avatar Companion -> Engine to `OpenAvatarChat sidecar` and save. The floating Sophia companion swaps from the built-in portrait into an embedded OpenAvatarChat frame with camera/microphone/autoplay permissions, an `open` shortcut for the full sidecar tab, and a `mini` control that collapses back to the built-in portrait without changing saved settings.
+
+The practical integration path is to let UVB remain the source of truth for identity, memory, Telegram, STT, LLM, and Kokoro, then use OpenAvatarChat/LiteAvatar as a local visual renderer. The iframe bridge is now in place; deeper state/audio coupling can move through the same avatar state packet once OpenAvatarChat's WebRTC surface is tuned for Sophia's normal UVB conversation flow.

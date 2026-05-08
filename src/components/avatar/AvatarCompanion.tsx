@@ -9,6 +9,7 @@ import {
   loadAvatarSettings,
   saveAvatarSettings,
   type AvatarMood,
+  type AvatarRuntime,
   type AvatarSettings,
 } from "@/lib/avatarSettings";
 
@@ -30,36 +31,52 @@ const POSITION_OFFSETS: Record<AvatarSettings["position"], { left?: number; righ
 
 const CHAT_REACTION_MS = 14_000;
 const AVATAR_POSITION_PADDING = 12;
+const EXTERNAL_RUNTIME_MIN_WIDTH = 360;
+const EXTERNAL_RUNTIME_MAX_WIDTH = 680;
 
 type Point = { x: number; y: number };
+type CompanionBounds = { width: number; height: number };
 
-function clampPoint(point: Point, size: number): Point {
+function getBuiltInBounds(size: number): CompanionBounds {
+  return {
+    width: Math.max(160, size + 52),
+    height: size + 58,
+  };
+}
+
+function getExternalRuntimeBounds(size: number): CompanionBounds {
+  const width = Math.round(
+    Math.min(EXTERNAL_RUNTIME_MAX_WIDTH, Math.max(EXTERNAL_RUNTIME_MIN_WIDTH, size * 2.85))
+  );
+  return {
+    width,
+    height: Math.round(Math.min(760, Math.max(420, width * 1.18))) + 58,
+  };
+}
+
+function clampPoint(point: Point, bounds: CompanionBounds): Point {
   if (typeof window === "undefined") return point;
-  const width = Math.max(160, size + 52);
-  const height = size + 58;
   return {
     x: Math.min(
       Math.max(AVATAR_POSITION_PADDING, point.x),
-      Math.max(AVATAR_POSITION_PADDING, window.innerWidth - width - AVATAR_POSITION_PADDING)
+      Math.max(AVATAR_POSITION_PADDING, window.innerWidth - bounds.width - AVATAR_POSITION_PADDING)
     ),
     y: Math.min(
       Math.max(AVATAR_POSITION_PADDING, point.y),
-      Math.max(AVATAR_POSITION_PADDING, window.innerHeight - height - AVATAR_POSITION_PADDING)
+      Math.max(AVATAR_POSITION_PADDING, window.innerHeight - bounds.height - AVATAR_POSITION_PADDING)
     ),
   };
 }
 
-function presetToPoint(position: AvatarSettings["position"], size: number): Point {
+function presetToPoint(position: AvatarSettings["position"], bounds: CompanionBounds): Point {
   if (typeof window === "undefined") return { x: 20, y: 20 };
   const offsets = POSITION_OFFSETS[position];
-  const width = Math.max(160, size + 52);
-  const height = size + 58;
   return clampPoint(
     {
-      x: offsets.left ?? window.innerWidth - width - (offsets.right ?? 20),
-      y: offsets.top ?? window.innerHeight - height - (offsets.bottom ?? 20),
+      x: offsets.left ?? window.innerWidth - bounds.width - (offsets.right ?? 20),
+      y: offsets.top ?? window.innerHeight - bounds.height - (offsets.bottom ?? 20),
     },
-    size
+    bounds
   );
 }
 
@@ -68,6 +85,22 @@ function getLatestMessage(messages: ChatMessage[]) {
     if (!latest || message.timestamp > latest.timestamp) return message;
     return latest;
   }, null);
+}
+
+function runtimeUrlForSettings(settings: AvatarSettings): string {
+  if (settings.runtime === "openavatarchat") return settings.openAvatarChatUrl.trim();
+  if (settings.runtime === "liteavatar") return settings.liteAvatarRuntimeUrl.trim();
+  if (settings.runtime === "custom") return settings.desktopRuntimeUrl.trim();
+  return "";
+}
+
+function runtimeLabel(runtime: AvatarRuntime): string {
+  if (runtime === "openavatarchat") return "OpenAvatarChat";
+  if (runtime === "liteavatar") return "LiteAvatar";
+  if (runtime === "live2d") return "Live2D";
+  if (runtime === "vrm") return "VRM";
+  if (runtime === "custom") return "Custom";
+  return "Built-in";
 }
 
 function moodFromActivity(
@@ -279,10 +312,126 @@ function AvatarPortraitStage({
   );
 }
 
+function ExternalAvatarRuntime({
+  settings,
+  mood,
+  color,
+  glowColor,
+  glowIntensity,
+  statusLabel,
+  onCollapse,
+}: {
+  settings: AvatarSettings;
+  mood: AvatarMood;
+  color: string;
+  glowColor: string;
+  glowIntensity: number;
+  statusLabel: string;
+  onCollapse: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const runtimeUrl = runtimeUrlForSettings(settings);
+  const safeGlowIntensity = Math.min(1.25, Math.max(0, glowIntensity));
+  const frameWidth = Math.round(
+    Math.min(EXTERNAL_RUNTIME_MAX_WIDTH, Math.max(EXTERNAL_RUNTIME_MIN_WIDTH, settings.size * 2.85))
+  );
+  const frameHeight = getExternalRuntimeBounds(settings.size).height - 58;
+  const hasRuntimeUrl = runtimeUrl.startsWith("http://") || runtimeUrl.startsWith("https://");
+
+  return (
+    <motion.div
+      className="overflow-hidden rounded-[24px] border border-white/15 bg-[#05080d]/92 shadow-2xl backdrop-blur-xl"
+      style={{
+        width: frameWidth,
+        height: frameHeight,
+        boxShadow: `0 0 ${Math.round(42 * safeGlowIntensity)}px ${glowColor}${Math.round(
+          115 * safeGlowIntensity
+        )
+          .toString(16)
+          .padStart(2, "0")}`,
+      }}
+      animate={{
+        y: mood === "speaking" ? [0, -2, 0] : [0, -1, 0],
+        borderColor: `${color}66`,
+      }}
+      transition={{ duration: mood === "speaking" ? 0.9 : 3.2, repeat: Infinity, ease: "easeInOut" }}
+    >
+      <div className="flex h-10 items-center justify-between border-b border-white/10 bg-black/55 px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+          <span className="truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-white/82">
+            {settings.displayName} · {runtimeLabel(settings.runtime)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="hidden text-[10px] uppercase tracking-[0.14em] text-white/45 sm:inline">
+            {statusLabel}
+          </span>
+          {hasRuntimeUrl && (
+            <a
+              href={runtimeUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-white/62 transition-colors hover:border-white/25 hover:text-white"
+              title={`Open ${runtimeLabel(settings.runtime)} in a full tab`}
+            >
+              open
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-white/62 transition-colors hover:border-white/25 hover:text-white"
+            title="Collapse to built-in Sophia portrait"
+          >
+            mini
+          </button>
+        </div>
+      </div>
+      <div className="relative h-[calc(100%-2.5rem)] bg-black">
+        {hasRuntimeUrl ? (
+          <>
+            {!loaded && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[#05080d] px-5 text-center">
+                <div
+                  className="h-8 w-8 rounded-full border border-white/10"
+                  style={{ boxShadow: `0 0 28px ${color}88`, backgroundColor: `${color}33` }}
+                />
+                <p className="text-xs font-semibold text-white/78">Connecting {runtimeLabel(settings.runtime)}...</p>
+                <p className="max-w-72 text-[11px] leading-relaxed text-white/42">
+                  Start it with <span className="font-mono text-white/65">bun run avatar:openavatarchat</span> if the
+                  frame stays empty.
+                </p>
+              </div>
+            )}
+            <iframe
+              key={runtimeUrl}
+              src={runtimeUrl}
+              title={`${settings.displayName} ${runtimeLabel(settings.runtime)} runtime`}
+              className="h-full w-full border-0"
+              allow="camera; microphone; autoplay; clipboard-write; fullscreen; display-capture"
+              referrerPolicy="no-referrer"
+              onLoad={() => setLoaded(true)}
+            />
+          </>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center">
+            <p className="text-xs font-semibold text-white/80">{runtimeLabel(settings.runtime)} needs a local URL.</p>
+            <p className="max-w-72 text-[11px] leading-relaxed text-white/42">
+              Add the runtime URL in Settings, then save avatar settings.
+            </p>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 export default function AvatarCompanion() {
   const [settings, setSettings] = useState<AvatarSettings>(() => loadAvatarSettings());
   const [now, setNow] = useState(() => Date.now());
   const [failedAssetUrl, setFailedAssetUrl] = useState("");
+  const [externalCollapsed, setExternalCollapsed] = useState(false);
   const activeThreadId = useAppStore((state) => state.activeThreadId);
   const threads = useAppStore((state) => state.threads);
   const isRecording = useAppStore((state) => state.isRecording);
@@ -298,6 +447,7 @@ export default function AvatarCompanion() {
       const nextSettings = loadAvatarSettings();
       setSettings(nextSettings);
       setFailedAssetUrl("");
+      setExternalCollapsed(false);
       setCustomPosition(nextSettings.customPosition);
       dragPositionRef.current = nextSettings.customPosition;
     };
@@ -321,7 +471,6 @@ export default function AvatarCompanion() {
 
   if (!settings.enabled || settings.mode !== "browser-overlay") return null;
 
-  const color = MOOD_COLORS[settings.mood];
   const effectiveMood = moodFromActivity(
     settings,
     avatarActivity,
@@ -345,9 +494,15 @@ export default function AvatarCompanion() {
         ? DEFAULT_SOPHIA_AVATAR_ASSET_URL
         : "";
   const usesStyleSheetCrop = visibleAssetUrl.includes("sophia-knight-pixar.png");
+  const shouldUseExternalRuntime =
+    !externalCollapsed &&
+    (settings.runtime === "openavatarchat" || settings.runtime === "liteavatar" || settings.runtime === "custom");
+  const companionBounds = shouldUseExternalRuntime
+    ? getExternalRuntimeBounds(settings.size)
+    : getBuiltInBounds(settings.size);
   const position = customPosition
-    ? clampPoint(customPosition, settings.size)
-    : presetToPoint(settings.position, settings.size);
+    ? clampPoint(customPosition, companionBounds)
+    : presetToPoint(settings.position, companionBounds);
 
   const savePosition = (point: Point) => {
     const nextSettings = { ...settings, customPosition: point };
@@ -384,7 +539,7 @@ export default function AvatarCompanion() {
                 x: event.clientX - dragOffsetRef.current.x,
                 y: event.clientY - dragOffsetRef.current.y,
               },
-              settings.size
+              companionBounds
             );
             setCustomPosition(next);
             dragPositionRef.current = next;
@@ -405,7 +560,17 @@ export default function AvatarCompanion() {
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: effectiveColor }} />
           drag
         </button>
-        {visibleAssetUrl ? (
+        {shouldUseExternalRuntime ? (
+          <ExternalAvatarRuntime
+            settings={settings}
+            mood={effectiveMood}
+            color={effectiveColor}
+            glowColor={glowColor}
+            glowIntensity={glowIntensity}
+            statusLabel={statusLabel}
+            onCollapse={() => setExternalCollapsed(true)}
+          />
+        ) : visibleAssetUrl ? (
           <AvatarPortraitStage
             assetUrl={visibleAssetUrl}
             isStyleSheet={usesStyleSheetCrop}
@@ -420,8 +585,19 @@ export default function AvatarCompanion() {
         ) : (
           <SophiaFigure mood={effectiveMood} color={effectiveColor} size={settings.size} />
         )}
-        <div className="rounded-full border border-white/10 bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wider text-white/80 shadow-lg backdrop-blur-md">
-          {settings.displayName} · {statusLabel}
+        <div className="flex items-center gap-2">
+          <div className="rounded-full border border-white/10 bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wider text-white/80 shadow-lg backdrop-blur-md">
+            {settings.displayName} · {statusLabel}
+          </div>
+          {externalCollapsed && settings.runtime !== "built-in" && (
+            <button
+              type="button"
+              onClick={() => setExternalCollapsed(false)}
+              className="rounded-full border border-white/10 bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wider text-white/70 shadow-lg backdrop-blur-md transition-colors hover:border-white/25 hover:text-white"
+            >
+              live
+            </button>
+          )}
         </div>
       </div>
     </motion.div>
