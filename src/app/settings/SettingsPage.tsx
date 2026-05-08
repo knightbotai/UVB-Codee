@@ -2541,6 +2541,37 @@ export default function SettingsPage() {
                         className="w-full accent-uvb-neon-green"
                       />
                     </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Glow Color</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={avatarSettings.glowColor}
+                          onChange={(event) => updateAvatarSettings({ glowColor: event.target.value })}
+                          className="h-10 w-12 rounded-lg border border-uvb-border/30 bg-transparent p-1"
+                        />
+                        <input
+                          value={avatarSettings.glowColor}
+                          onChange={(event) => updateAvatarSettings({ glowColor: event.target.value })}
+                          className="input-field"
+                          placeholder="#39ff14"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">
+                        Glow: {Math.round(avatarSettings.glowIntensity * 100)}%
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1.5"
+                        step="0.05"
+                        value={avatarSettings.glowIntensity}
+                        onChange={(event) => updateAvatarSettings({ glowIntensity: Number(event.target.value) })}
+                        className="w-full accent-uvb-neon-green"
+                      />
+                    </div>
                     <div className="md:col-span-2">
                       <label className="mb-1.5 block text-xs text-uvb-text-muted">Avatar Asset</label>
                       <input

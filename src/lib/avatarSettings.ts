@@ -16,6 +16,8 @@ export interface AvatarSettings {
   assetUrl: string;
   size: number;
   opacity: number;
+  glowColor: string;
+  glowIntensity: number;
   position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
   customPosition: { x: number; y: number } | null;
   reactToVoice: boolean;
@@ -34,6 +36,8 @@ export const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
   assetUrl: DEFAULT_SOPHIA_AVATAR_ASSET_URL,
   size: 148,
   opacity: 0.92,
+  glowColor: "#39ff14",
+  glowIntensity: 0.45,
   position: "bottom-right",
   customPosition: null,
   reactToVoice: true,
@@ -97,6 +101,8 @@ export function normalizeAvatarSettings(settings: Partial<AvatarSettings> = {}):
     assetUrl: safeString(settings.assetUrl, DEFAULT_AVATAR_SETTINGS.assetUrl),
     size: safeNumber(settings.size, DEFAULT_AVATAR_SETTINGS.size, 56, 260),
     opacity: safeNumber(settings.opacity, DEFAULT_AVATAR_SETTINGS.opacity, 0.2, 1),
+    glowColor: safeString(settings.glowColor, DEFAULT_AVATAR_SETTINGS.glowColor),
+    glowIntensity: safeNumber(settings.glowIntensity, DEFAULT_AVATAR_SETTINGS.glowIntensity, 0, 1.5),
     position,
     customPosition,
     reactToVoice: typeof settings.reactToVoice === "boolean" ? settings.reactToVoice : true,

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import Image from "next/image";
 import { useAppStore, type ChatMessage } from "@/stores/appStore";
 import {
   AVATAR_SETTINGS_UPDATED_EVENT,
@@ -159,13 +158,19 @@ function AvatarPortraitStage({
   isStyleSheet,
   mood,
   color,
+  glowColor,
+  glowIntensity,
   size,
+  onAssetError,
 }: {
   assetUrl: string;
   isStyleSheet: boolean;
   mood: AvatarMood;
   color: string;
+  glowColor: string;
+  glowIntensity: number;
   size: number;
+  onAssetError: () => void;
 }) {
   const isCelebrating = mood === "celebrating";
   const isListening = mood === "listening";
@@ -179,7 +184,11 @@ function AvatarPortraitStage({
         width: size,
         height: Math.round(size * 1.24),
         background: `linear-gradient(145deg, ${color}aa, rgba(255,255,255,0.18) 28%, rgba(14,20,31,0.95) 72%)`,
-        filter: `drop-shadow(0 0 24px ${color}66)`,
+        filter: `drop-shadow(0 0 ${Math.round(32 * glowIntensity)}px ${glowColor}${Math.round(
+          170 * glowIntensity
+        )
+          .toString(16)
+          .padStart(2, "0")})`,
         transformPerspective: 700,
       }}
       animate={{
@@ -189,15 +198,17 @@ function AvatarPortraitStage({
       }}
       transition={{ duration: isSpeaking ? 0.9 : 3.4, repeat: Infinity, ease: "easeInOut" }}
     >
-      <div className="absolute -inset-4 rounded-full opacity-35 blur-2xl" style={{ backgroundColor: color }} />
+      <div
+        className="absolute -inset-4 rounded-full blur-2xl"
+        style={{ backgroundColor: glowColor, opacity: Math.min(0.55, 0.28 * glowIntensity) }}
+      />
       <div className="relative h-full w-full overflow-hidden rounded-[29px] border border-white/15 bg-[#070b12] shadow-2xl">
-        <Image
+        <img
           src={assetUrl}
           alt=""
-          fill
-          unoptimized
-          sizes={`${Math.round(size)}px`}
-          className="select-none"
+          draggable={false}
+          onError={onAssetError}
+          className="absolute select-none"
           style={
             isStyleSheet
               ? {
@@ -209,7 +220,14 @@ function AvatarPortraitStage({
                   top: 0,
                   width: "200%",
                 }
-              : { objectFit: "cover", objectPosition: "50% 22%" }
+              : {
+                  height: "100%",
+                  left: 0,
+                  objectFit: "cover",
+                  objectPosition: "50% 22%",
+                  top: 0,
+                  width: "100%",
+                }
           }
         />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_35%_10%,rgba(255,255,255,0.30),transparent_28%),linear-gradient(180deg,transparent_48%,rgba(4,8,13,0.72)_100%)]" />
@@ -234,6 +252,7 @@ function AvatarPortraitStage({
 export default function AvatarCompanion() {
   const [settings, setSettings] = useState<AvatarSettings>(() => loadAvatarSettings());
   const [now, setNow] = useState(() => Date.now());
+  const [failedAssetUrl, setFailedAssetUrl] = useState("");
   const activeThreadId = useAppStore((state) => state.activeThreadId);
   const threads = useAppStore((state) => state.threads);
   const isRecording = useAppStore((state) => state.isRecording);
@@ -247,6 +266,7 @@ export default function AvatarCompanion() {
     const refresh = () => {
       const nextSettings = loadAvatarSettings();
       setSettings(nextSettings);
+      setFailedAssetUrl("");
       setCustomPosition(nextSettings.customPosition);
       dragPositionRef.current = nextSettings.customPosition;
     };
@@ -273,11 +293,19 @@ export default function AvatarCompanion() {
   const color = MOOD_COLORS[settings.mood];
   const effectiveMood = moodFromActivity(settings, latestMessage, isVoiceActive, isRecording, now);
   const effectiveColor = MOOD_COLORS[effectiveMood];
+  const glowColor = settings.glowColor || effectiveColor;
+  const glowIntensity = settings.glowIntensity;
   const avatarAssetUrl =
     settings.assetUrl === "__generated__"
       ? ""
       : settings.assetUrl || DEFAULT_SOPHIA_AVATAR_ASSET_URL;
-  const usesDefaultStyleSheet = avatarAssetUrl === DEFAULT_SOPHIA_AVATAR_ASSET_URL;
+  const visibleAssetUrl =
+    avatarAssetUrl && avatarAssetUrl !== failedAssetUrl
+      ? avatarAssetUrl
+      : avatarAssetUrl !== DEFAULT_SOPHIA_AVATAR_ASSET_URL && failedAssetUrl !== DEFAULT_SOPHIA_AVATAR_ASSET_URL
+        ? DEFAULT_SOPHIA_AVATAR_ASSET_URL
+        : "";
+  const usesDefaultStyleSheet = visibleAssetUrl === DEFAULT_SOPHIA_AVATAR_ASSET_URL;
   const position = customPosition
     ? clampPoint(customPosition, settings.size)
     : presetToPoint(settings.position, settings.size);
@@ -338,13 +366,16 @@ export default function AvatarCompanion() {
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: effectiveColor }} />
           drag
         </button>
-        {avatarAssetUrl ? (
+        {visibleAssetUrl ? (
           <AvatarPortraitStage
-            assetUrl={avatarAssetUrl}
+            assetUrl={visibleAssetUrl}
             isStyleSheet={usesDefaultStyleSheet}
             mood={effectiveMood}
             color={effectiveColor}
+            glowColor={glowColor}
+            glowIntensity={glowIntensity}
             size={settings.size}
+            onAssetError={() => setFailedAssetUrl(visibleAssetUrl)}
           />
         ) : (
           <SophiaFigure mood={effectiveMood} color={effectiveColor} size={settings.size} />
