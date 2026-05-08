@@ -6,11 +6,19 @@ export const DEFAULT_SOPHIA_AVATAR_ASSET_URL = "/avatar/sophia-knight-widget.web
 export type AvatarMode = "browser-overlay" | "desktop-companion" | "stream-overlay";
 export type AvatarStyle = "orb" | "portrait" | "live2d" | "vrm" | "custom";
 export type AvatarMood = "idle" | "listening" | "thinking" | "speaking" | "celebrating" | "alert";
+export type AvatarRuntime =
+  | "built-in"
+  | "liteavatar"
+  | "openavatarchat"
+  | "live2d"
+  | "vrm"
+  | "custom";
 
 export interface AvatarSettings {
   enabled: boolean;
   mode: AvatarMode;
   style: AvatarStyle;
+  runtime: AvatarRuntime;
   mood: AvatarMood;
   displayName: string;
   assetUrl: string;
@@ -24,6 +32,10 @@ export interface AvatarSettings {
   reactToChat: boolean;
   reactToSystem: boolean;
   desktopRuntimeUrl: string;
+  liteAvatarRuntimeUrl: string;
+  openAvatarChatUrl: string;
+  live2dModelUrl: string;
+  vrmModelUrl: string;
   notes: string;
 }
 
@@ -31,6 +43,7 @@ export const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
   enabled: true,
   mode: "browser-overlay",
   style: "portrait",
+  runtime: "built-in",
   mood: "idle",
   displayName: "Sophia",
   assetUrl: DEFAULT_SOPHIA_AVATAR_ASSET_URL,
@@ -44,7 +57,12 @@ export const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
   reactToChat: true,
   reactToSystem: true,
   desktopRuntimeUrl: "ws://127.0.0.1:8790/avatar",
-  notes: "Browser overlay is active first. Desktop companion, Live2D, and VRM runtimes are staged.",
+  liteAvatarRuntimeUrl: "http://127.0.0.1:8282",
+  openAvatarChatUrl: "http://127.0.0.1:8283",
+  live2dModelUrl: "",
+  vrmModelUrl: "",
+  notes:
+    "Built-in portrait is active now. LiteAvatar/OpenAvatarChat, Live2D, and VRM runtimes are staged as selectable engines.",
 };
 
 const STORAGE_KEY = "uvb:avatar-settings";
@@ -68,6 +86,14 @@ export function normalizeAvatarSettings(settings: Partial<AvatarSettings> = {}):
     settings.style === "custom"
       ? settings.style
       : "orb";
+  const runtime: AvatarRuntime =
+    settings.runtime === "liteavatar" ||
+    settings.runtime === "openavatarchat" ||
+    settings.runtime === "live2d" ||
+    settings.runtime === "vrm" ||
+    settings.runtime === "custom"
+      ? settings.runtime
+      : "built-in";
   const mood: AvatarMood =
     settings.mood === "listening" ||
     settings.mood === "thinking" ||
@@ -96,6 +122,7 @@ export function normalizeAvatarSettings(settings: Partial<AvatarSettings> = {}):
     enabled: typeof settings.enabled === "boolean" ? settings.enabled : DEFAULT_AVATAR_SETTINGS.enabled,
     mode,
     style,
+    runtime,
     mood,
     displayName: safeString(settings.displayName, DEFAULT_AVATAR_SETTINGS.displayName),
     assetUrl: safeString(settings.assetUrl, DEFAULT_AVATAR_SETTINGS.assetUrl),
@@ -109,6 +136,13 @@ export function normalizeAvatarSettings(settings: Partial<AvatarSettings> = {}):
     reactToChat: typeof settings.reactToChat === "boolean" ? settings.reactToChat : true,
     reactToSystem: typeof settings.reactToSystem === "boolean" ? settings.reactToSystem : true,
     desktopRuntimeUrl: safeString(settings.desktopRuntimeUrl, DEFAULT_AVATAR_SETTINGS.desktopRuntimeUrl),
+    liteAvatarRuntimeUrl: safeString(
+      settings.liteAvatarRuntimeUrl,
+      DEFAULT_AVATAR_SETTINGS.liteAvatarRuntimeUrl
+    ),
+    openAvatarChatUrl: safeString(settings.openAvatarChatUrl, DEFAULT_AVATAR_SETTINGS.openAvatarChatUrl),
+    live2dModelUrl: safeString(settings.live2dModelUrl, DEFAULT_AVATAR_SETTINGS.live2dModelUrl),
+    vrmModelUrl: safeString(settings.vrmModelUrl, DEFAULT_AVATAR_SETTINGS.vrmModelUrl),
     notes: safeString(settings.notes, DEFAULT_AVATAR_SETTINGS.notes),
   };
 }

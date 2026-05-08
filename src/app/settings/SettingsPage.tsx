@@ -41,6 +41,7 @@ import {
   loadAvatarSettings,
   saveAvatarSettings,
   type AvatarMood,
+  type AvatarRuntime,
   type AvatarSettings,
 } from "@/lib/avatarSettings";
 import {
@@ -2493,6 +2494,32 @@ export default function SettingsPage() {
                       </select>
                     </div>
                     <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Engine</label>
+                      <select
+                        value={avatarSettings.runtime}
+                        onChange={(event) => {
+                          const runtime = event.target.value as AvatarRuntime;
+                          const style =
+                            runtime === "live2d"
+                              ? "live2d"
+                              : runtime === "vrm"
+                                ? "vrm"
+                                : runtime === "built-in"
+                                  ? "portrait"
+                                  : "custom";
+                          updateAvatarSettings({ runtime, style });
+                        }}
+                        className="input-field"
+                      >
+                        <option value="built-in">Built-in portrait</option>
+                        <option value="liteavatar">LiteAvatar CPU sidecar</option>
+                        <option value="openavatarchat">OpenAvatarChat sidecar</option>
+                        <option value="live2d">Live2D Web</option>
+                        <option value="vrm">VRM / three-vrm</option>
+                        <option value="custom">Custom bridge</option>
+                      </select>
+                    </div>
+                    <div>
                       <label className="mb-1.5 block text-xs text-uvb-text-muted">Screen Position</label>
                       <select
                         value={avatarSettings.position}
@@ -2629,6 +2656,44 @@ export default function SettingsPage() {
                         onChange={(event) => updateAvatarSettings({ desktopRuntimeUrl: event.target.value })}
                         className="input-field"
                         placeholder="ws://127.0.0.1:8790/avatar"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">LiteAvatar URL</label>
+                      <input
+                        value={avatarSettings.liteAvatarRuntimeUrl}
+                        onChange={(event) =>
+                          updateAvatarSettings({ liteAvatarRuntimeUrl: event.target.value })
+                        }
+                        className="input-field"
+                        placeholder="http://127.0.0.1:8282"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">OpenAvatarChat URL</label>
+                      <input
+                        value={avatarSettings.openAvatarChatUrl}
+                        onChange={(event) => updateAvatarSettings({ openAvatarChatUrl: event.target.value })}
+                        className="input-field"
+                        placeholder="http://127.0.0.1:8283"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Live2D Model URL</label>
+                      <input
+                        value={avatarSettings.live2dModelUrl}
+                        onChange={(event) => updateAvatarSettings({ live2dModelUrl: event.target.value })}
+                        className="input-field"
+                        placeholder="/avatar/live2d/sophia/sophia.model3.json"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">VRM Model URL</label>
+                      <input
+                        value={avatarSettings.vrmModelUrl}
+                        onChange={(event) => updateAvatarSettings({ vrmModelUrl: event.target.value })}
+                        className="input-field"
+                        placeholder="/avatar/vrm/sophia.vrm"
                       />
                     </div>
                   </div>
