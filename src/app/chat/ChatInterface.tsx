@@ -472,6 +472,7 @@ export default function ChatInterface() {
     setActiveThread,
     isRecording,
     setIsRecording,
+    setAvatarActivity,
   } =
     useAppStore();
   const [input, setInput] = useState("");
@@ -485,6 +486,9 @@ export default function ChatInterface() {
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
   const [activityStatus, setActivityStatus] = useState("Ready for text, voice, and media.");
   const [lastFailedInput, setLastFailedInput] = useState<string | null>(null);
+  const [avatarResponsePhase, setAvatarResponsePhase] = useState<"idle" | "pondering" | "writing">(
+    "idle"
+  );
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isSpeechPaused, setIsSpeechPaused] = useState(false);
   const [hasSpeechReady, setHasSpeechReady] = useState(false);
@@ -552,6 +556,44 @@ export default function ChatInterface() {
   const chatAbortRef = useRef<AbortController | null>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+
+  useEffect(() => {
+    if (isSpeaking || liveVoicePhase === "speaking") {
+      setAvatarActivity("speaking");
+      return;
+    }
+
+    if (avatarResponsePhase === "writing") {
+      setAvatarActivity("writing");
+      return;
+    }
+
+    if (isTyping || liveVoicePhase === "processing" || avatarResponsePhase === "pondering") {
+      setAvatarActivity("pondering");
+      return;
+    }
+
+    if (isTranscribing) {
+      setAvatarActivity("transcribing");
+      return;
+    }
+
+    if (isRecording || liveVoiceRecording || liveVoicePhase === "listening") {
+      setAvatarActivity("listening");
+      return;
+    }
+
+    setAvatarActivity("idle");
+  }, [
+    isRecording,
+    isSpeaking,
+    isTranscribing,
+    isTyping,
+    avatarResponsePhase,
+    liveVoicePhase,
+    liveVoiceRecording,
+    setAvatarActivity,
+  ]);
 
   const scrollMessagesToTop = () => {
     const scroller = messagesScrollerRef.current;
@@ -1083,6 +1125,7 @@ export default function ChatInterface() {
     setInput("");
     setPendingAttachments([]);
     setIsTyping(true);
+    setAvatarResponsePhase("pondering");
     setLastFailedInput(null);
     setActivityStatus("Thinking through the local model...");
     chatAbortRef.current?.abort();
@@ -1104,6 +1147,7 @@ export default function ChatInterface() {
         ...priorMessages,
         { role: "user", content: buildModelContent(promptText, attachments) },
       ], modelSettings, voiceSettings.systemPrompt, abortController.signal);
+      setAvatarResponsePhase("writing");
       const aiMsg: ChatMessage = {
         id: generateId(),
         role: "assistant",
@@ -1148,6 +1192,7 @@ export default function ChatInterface() {
       if (chatAbortRef.current === abortController) {
         chatAbortRef.current = null;
       }
+      setAvatarResponsePhase("idle");
       setIsTyping(false);
     }
   };
@@ -1164,6 +1209,7 @@ export default function ChatInterface() {
 
     pipecatFallbackInFlightRef.current = true;
     setIsTyping(true);
+    setAvatarResponsePhase("pondering");
     liveTurnStateRef.current = "processing";
     setLiveVoicePhase("processing");
     setActivityStatus("Heard you. Asking the fast UVB chat bridge...");
@@ -1205,6 +1251,7 @@ export default function ChatInterface() {
         liveModelSettings,
         liveSystemPrompt
       );
+      setAvatarResponsePhase("writing");
 
       addMessage(threadId, {
         id: generateId(),
@@ -1242,6 +1289,7 @@ export default function ChatInterface() {
       setActivityStatus(`Live voice response failed: ${message}`);
     } finally {
       pipecatFallbackInFlightRef.current = false;
+      setAvatarResponsePhase("idle");
       setIsTyping(false);
       if (
         pipecatPendingTranscriptRef.current.trim() &&

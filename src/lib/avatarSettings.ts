@@ -1,7 +1,7 @@
 "use client";
 
 export const AVATAR_SETTINGS_UPDATED_EVENT = "uvb:avatar-settings-updated";
-export const DEFAULT_SOPHIA_AVATAR_ASSET_URL = "/avatar/sophia-knight-pixar.png";
+export const DEFAULT_SOPHIA_AVATAR_ASSET_URL = "/avatar/sophia-knight-widget.webp";
 
 export type AvatarMode = "browser-overlay" | "desktop-companion" | "stream-overlay";
 export type AvatarStyle = "orb" | "portrait" | "live2d" | "vrm" | "custom";

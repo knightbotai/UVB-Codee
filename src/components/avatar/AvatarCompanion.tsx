@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { useAppStore, type ChatMessage } from "@/stores/appStore";
+import { useAppStore, type AvatarActivity, type ChatMessage } from "@/stores/appStore";
 import {
   AVATAR_SETTINGS_UPDATED_EVENT,
   DEFAULT_SOPHIA_AVATAR_ASSET_URL,
@@ -72,11 +72,17 @@ function getLatestMessage(messages: ChatMessage[]) {
 
 function moodFromActivity(
   settings: AvatarSettings,
+  avatarActivity: AvatarActivity,
   latestMessage: ChatMessage | null,
   isVoiceActive: boolean,
   isRecording: boolean,
   now: number
 ): AvatarMood {
+  if (avatarActivity === "listening" || avatarActivity === "transcribing") return "listening";
+  if (avatarActivity === "pondering" || avatarActivity === "writing") return "thinking";
+  if (avatarActivity === "speaking") return "speaking";
+  if (avatarActivity === "celebrating") return "celebrating";
+  if (avatarActivity === "alert") return "alert";
   if (settings.reactToVoice && (isRecording || isVoiceActive)) return "listening";
   if (!settings.reactToChat || !latestMessage) return settings.mood;
 
@@ -156,6 +162,7 @@ function SophiaFigure({ mood, color, size }: { mood: AvatarMood; color: string; 
 function AvatarPortraitStage({
   assetUrl,
   isStyleSheet,
+  activity,
   mood,
   color,
   glowColor,
@@ -165,6 +172,7 @@ function AvatarPortraitStage({
 }: {
   assetUrl: string;
   isStyleSheet: boolean;
+  activity: AvatarActivity;
   mood: AvatarMood;
   color: string;
   glowColor: string;
@@ -176,6 +184,9 @@ function AvatarPortraitStage({
   const isListening = mood === "listening";
   const isSpeaking = mood === "speaking";
   const isThinking = mood === "thinking";
+  const isWriting = activity === "writing";
+  const isPondering = activity === "pondering" || (mood === "thinking" && activity === "idle");
+  const safeGlowIntensity = Math.min(1.25, Math.max(0, glowIntensity));
 
   return (
     <motion.div
@@ -184,8 +195,8 @@ function AvatarPortraitStage({
         width: size,
         height: Math.round(size * 1.24),
         background: `linear-gradient(145deg, ${color}aa, rgba(255,255,255,0.18) 28%, rgba(14,20,31,0.95) 72%)`,
-        filter: `drop-shadow(0 0 ${Math.round(32 * glowIntensity)}px ${glowColor}${Math.round(
-          170 * glowIntensity
+        filter: `drop-shadow(0 0 ${Math.round(24 * safeGlowIntensity)}px ${glowColor}${Math.round(
+          130 * safeGlowIntensity
         )
           .toString(16)
           .padStart(2, "0")})`,
@@ -200,7 +211,7 @@ function AvatarPortraitStage({
     >
       <div
         className="absolute -inset-4 rounded-full blur-2xl"
-        style={{ backgroundColor: glowColor, opacity: Math.min(0.55, 0.28 * glowIntensity) }}
+        style={{ backgroundColor: glowColor, opacity: Math.min(0.42, 0.2 * safeGlowIntensity) }}
       />
       <div className="relative h-full w-full overflow-hidden rounded-[29px] border border-white/15 bg-[#070b12] shadow-2xl">
         <img
@@ -244,6 +255,25 @@ function AvatarPortraitStage({
             transition={{ duration: 0.8, repeat: Infinity }}
           />
         )}
+        {(isWriting || isPondering) && (
+          <motion.div
+            className="absolute bottom-7 right-4 flex gap-1"
+            aria-hidden="true"
+          >
+            {[0, 1, 2].map((item) => (
+              <motion.span
+                key={item}
+                className="h-1.5 w-1.5 rounded-full bg-white/80"
+                animate={
+                  isWriting
+                    ? { y: [0, -5, 0], opacity: [0.35, 1, 0.35] }
+                    : { scale: [0.82, 1.25, 0.82], opacity: [0.28, 0.88, 0.28] }
+                }
+                transition={{ duration: isWriting ? 0.7 : 1.05, delay: item * 0.12, repeat: Infinity }}
+              />
+            ))}
+          </motion.div>
+        )}
       </div>
     </motion.div>
   );
@@ -257,6 +287,7 @@ export default function AvatarCompanion() {
   const threads = useAppStore((state) => state.threads);
   const isRecording = useAppStore((state) => state.isRecording);
   const isVoiceActive = useAppStore((state) => state.isVoiceActive);
+  const avatarActivity = useAppStore((state) => state.avatarActivity);
   const dragOffsetRef = useRef<Point>({ x: 0, y: 0 });
   const dragPositionRef = useRef<Point | null>(settings.customPosition);
   const [dragging, setDragging] = useState(false);
@@ -291,8 +322,16 @@ export default function AvatarCompanion() {
   if (!settings.enabled || settings.mode !== "browser-overlay") return null;
 
   const color = MOOD_COLORS[settings.mood];
-  const effectiveMood = moodFromActivity(settings, latestMessage, isVoiceActive, isRecording, now);
+  const effectiveMood = moodFromActivity(
+    settings,
+    avatarActivity,
+    latestMessage,
+    isVoiceActive,
+    isRecording,
+    now
+  );
   const effectiveColor = MOOD_COLORS[effectiveMood];
+  const statusLabel = avatarActivity === "idle" ? effectiveMood : avatarActivity;
   const glowColor = settings.glowColor || effectiveColor;
   const glowIntensity = settings.glowIntensity;
   const avatarAssetUrl =
@@ -370,6 +409,7 @@ export default function AvatarCompanion() {
           <AvatarPortraitStage
             assetUrl={visibleAssetUrl}
             isStyleSheet={usesDefaultStyleSheet}
+            activity={avatarActivity}
             mood={effectiveMood}
             color={effectiveColor}
             glowColor={glowColor}
@@ -381,7 +421,7 @@ export default function AvatarCompanion() {
           <SophiaFigure mood={effectiveMood} color={effectiveColor} size={settings.size} />
         )}
         <div className="rounded-full border border-white/10 bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wider text-white/80 shadow-lg backdrop-blur-md">
-          {settings.displayName} · {effectiveMood}
+          {settings.displayName} · {statusLabel}
         </div>
       </div>
     </motion.div>

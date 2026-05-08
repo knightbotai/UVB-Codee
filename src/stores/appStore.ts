@@ -49,6 +49,16 @@ export interface PodcastSeat {
   isCustomVoice: boolean;
 }
 
+export type AvatarActivity =
+  | "idle"
+  | "listening"
+  | "transcribing"
+  | "pondering"
+  | "writing"
+  | "speaking"
+  | "celebrating"
+  | "alert";
+
 interface AppState {
   // Navigation
   sidebarOpen: boolean;
@@ -74,8 +84,10 @@ interface AppState {
   // Voice
   isVoiceActive: boolean;
   voiceInputLevel: number;
+  avatarActivity: AvatarActivity;
   setIsVoiceActive: (active: boolean) => void;
   setVoiceInputLevel: (level: number) => void;
+  setAvatarActivity: (activity: AvatarActivity) => void;
 
   // Podcast
   podcastSeats: PodcastSeat[];
@@ -304,8 +316,10 @@ export const useAppStore = create<AppState>()(
       // Voice
       isVoiceActive: false,
       voiceInputLevel: 0,
+      avatarActivity: "idle",
       setIsVoiceActive: (active) => set({ isVoiceActive: active }),
       setVoiceInputLevel: (level) => set({ voiceInputLevel: level }),
+      setAvatarActivity: (activity) => set({ avatarActivity: activity }),
 
       // Podcast
       podcastSeats: [
