@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useAppStore, type ChatMessage } from "@/stores/appStore";
 import {
   AVATAR_SETTINGS_UPDATED_EVENT,
+  DEFAULT_SOPHIA_AVATAR_ASSET_URL,
   loadAvatarSettings,
   saveAvatarSettings,
   type AvatarMood,
@@ -153,6 +154,83 @@ function SophiaFigure({ mood, color, size }: { mood: AvatarMood; color: string; 
   );
 }
 
+function AvatarPortraitStage({
+  assetUrl,
+  isStyleSheet,
+  mood,
+  color,
+  size,
+}: {
+  assetUrl: string;
+  isStyleSheet: boolean;
+  mood: AvatarMood;
+  color: string;
+  size: number;
+}) {
+  const isCelebrating = mood === "celebrating";
+  const isListening = mood === "listening";
+  const isSpeaking = mood === "speaking";
+  const isThinking = mood === "thinking";
+
+  return (
+    <motion.div
+      className="relative rounded-[30px] p-[1px]"
+      style={{
+        width: size,
+        height: Math.round(size * 1.24),
+        background: `linear-gradient(145deg, ${color}aa, rgba(255,255,255,0.18) 28%, rgba(14,20,31,0.95) 72%)`,
+        filter: `drop-shadow(0 0 24px ${color}66)`,
+        transformPerspective: 700,
+      }}
+      animate={{
+        rotateY: isThinking ? [-4, 5, -2] : isListening ? [3, -3, 3] : [-2, 2, -2],
+        rotateX: isCelebrating ? [-2, 4, -2] : 0,
+        y: isSpeaking ? [0, -3, 0] : [0, -1, 0],
+      }}
+      transition={{ duration: isSpeaking ? 0.9 : 3.4, repeat: Infinity, ease: "easeInOut" }}
+    >
+      <div className="absolute -inset-4 rounded-full opacity-35 blur-2xl" style={{ backgroundColor: color }} />
+      <div className="relative h-full w-full overflow-hidden rounded-[29px] border border-white/15 bg-[#070b12] shadow-2xl">
+        <Image
+          src={assetUrl}
+          alt=""
+          fill
+          unoptimized
+          sizes={`${Math.round(size)}px`}
+          className="select-none"
+          style={
+            isStyleSheet
+              ? {
+                  height: "200%",
+                  left: 0,
+                  maxWidth: "none",
+                  objectFit: "cover",
+                  objectPosition: "top left",
+                  top: 0,
+                  width: "200%",
+                }
+              : { objectFit: "cover", objectPosition: "50% 22%" }
+          }
+        />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_35%_10%,rgba(255,255,255,0.30),transparent_28%),linear-gradient(180deg,transparent_48%,rgba(4,8,13,0.72)_100%)]" />
+        <motion.div
+          className="absolute bottom-3 left-1/2 h-2 -translate-x-1/2 rounded-full"
+          style={{ width: size * 0.46, backgroundColor: color }}
+          animate={{ opacity: [0.35, 0.95, 0.35], scaleX: isListening ? [0.75, 1.18, 0.75] : 1 }}
+          transition={{ duration: isListening ? 0.72 : 2.4, repeat: Infinity }}
+        />
+        {isCelebrating && (
+          <motion.div
+            className="absolute right-4 top-4 h-6 w-6 rounded-full border border-white/30 bg-white/20"
+            animate={{ scale: [0.8, 1.2, 0.8], opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 0.8, repeat: Infinity }}
+          />
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 export default function AvatarCompanion() {
   const [settings, setSettings] = useState<AvatarSettings>(() => loadAvatarSettings());
   const [now, setNow] = useState(() => Date.now());
@@ -195,6 +273,11 @@ export default function AvatarCompanion() {
   const color = MOOD_COLORS[settings.mood];
   const effectiveMood = moodFromActivity(settings, latestMessage, isVoiceActive, isRecording, now);
   const effectiveColor = MOOD_COLORS[effectiveMood];
+  const avatarAssetUrl =
+    settings.assetUrl === "__generated__"
+      ? ""
+      : settings.assetUrl || DEFAULT_SOPHIA_AVATAR_ASSET_URL;
+  const usesDefaultStyleSheet = avatarAssetUrl === DEFAULT_SOPHIA_AVATAR_ASSET_URL;
   const position = customPosition
     ? clampPoint(customPosition, settings.size)
     : presetToPoint(settings.position, settings.size);
@@ -255,24 +338,14 @@ export default function AvatarCompanion() {
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: effectiveColor }} />
           drag
         </button>
-        {settings.assetUrl && settings.style !== "orb" ? (
-          <div
-            className="overflow-hidden rounded-[26px] border border-white/15 bg-black/50 shadow-2xl backdrop-blur-md"
-            style={{
-              width: settings.size,
-              height: settings.size,
-              boxShadow: `0 0 30px ${color}55`,
-            }}
-          >
-            <Image
-              src={settings.assetUrl}
-              alt=""
-              width={settings.size}
-              height={settings.size}
-              unoptimized
-              className="h-full w-full object-cover"
-            />
-          </div>
+        {avatarAssetUrl ? (
+          <AvatarPortraitStage
+            assetUrl={avatarAssetUrl}
+            isStyleSheet={usesDefaultStyleSheet}
+            mood={effectiveMood}
+            color={effectiveColor}
+            size={settings.size}
+          />
         ) : (
           <SophiaFigure mood={effectiveMood} color={effectiveColor} size={settings.size} />
         )}

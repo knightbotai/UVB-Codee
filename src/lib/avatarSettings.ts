@@ -1,6 +1,7 @@
 "use client";
 
 export const AVATAR_SETTINGS_UPDATED_EVENT = "uvb:avatar-settings-updated";
+export const DEFAULT_SOPHIA_AVATAR_ASSET_URL = "/avatar/sophia-knight-pixar.png";
 
 export type AvatarMode = "browser-overlay" | "desktop-companion" | "stream-overlay";
 export type AvatarStyle = "orb" | "portrait" | "live2d" | "vrm" | "custom";
@@ -27,11 +28,11 @@ export interface AvatarSettings {
 export const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
   enabled: true,
   mode: "browser-overlay",
-  style: "orb",
+  style: "portrait",
   mood: "idle",
   displayName: "Sophia",
-  assetUrl: "",
-  size: 112,
+  assetUrl: DEFAULT_SOPHIA_AVATAR_ASSET_URL,
+  size: 148,
   opacity: 0.92,
   position: "bottom-right",
   customPosition: null,
@@ -121,4 +122,36 @@ export function saveAvatarSettings(settings: AvatarSettings) {
   const normalized = normalizeAvatarSettings(settings);
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
   window.dispatchEvent(new CustomEvent(AVATAR_SETTINGS_UPDATED_EVENT, { detail: normalized }));
+}
+
+export async function fileToAvatarAssetDataUrl(file: File): Promise<string> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Choose an image file for the avatar.");
+  }
+
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const element = new window.Image();
+    element.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(element);
+    };
+    element.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not decode avatar image."));
+    };
+    element.src = url;
+  });
+
+  const maxSide = 900;
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight, 1));
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not prepare avatar canvas.");
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", 0.88);
 }

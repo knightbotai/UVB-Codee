@@ -36,6 +36,8 @@ import {
 } from "@/lib/agentToolSettings";
 import {
   DEFAULT_AVATAR_SETTINGS,
+  DEFAULT_SOPHIA_AVATAR_ASSET_URL,
+  fileToAvatarAssetDataUrl,
   loadAvatarSettings,
   saveAvatarSettings,
   type AvatarMood,
@@ -213,6 +215,7 @@ export default function SettingsPage() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const userPortraitInputRef = useRef<HTMLInputElement>(null);
   const assistantPortraitInputRef = useRef<HTMLInputElement>(null);
+  const avatarAssetInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -359,6 +362,19 @@ export default function SettingsPage() {
   const saveCurrentAvatarSettings = () => {
     saveAvatarSettings(avatarSettings);
     setAvatarStatus("Saved Sophia avatar companion settings.");
+  };
+
+  const uploadAvatarAsset = async (file: File | undefined) => {
+    if (!file) return;
+    setAvatarStatus("Preparing Sophia avatar image...");
+    try {
+      const dataUrl = await fileToAvatarAssetDataUrl(file);
+      updateAvatarSettings({ assetUrl: dataUrl, style: "portrait" });
+      setAvatarStatus("Avatar image loaded. Save avatar settings to keep it.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load avatar image.";
+      setAvatarStatus(message);
+    }
   };
 
   const saveCurrentAgentToolSettings = () => {
@@ -2526,13 +2542,54 @@ export default function SettingsPage() {
                       />
                     </div>
                     <div className="md:col-span-2">
-                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Avatar Asset URL</label>
+                      <label className="mb-1.5 block text-xs text-uvb-text-muted">Avatar Asset</label>
                       <input
-                        value={avatarSettings.assetUrl}
+                        value={avatarSettings.assetUrl === "__generated__" ? "" : avatarSettings.assetUrl}
                         onChange={(event) => updateAvatarSettings({ assetUrl: event.target.value })}
                         className="input-field"
                         placeholder="Optional portrait, VRM, Live2D, or renderer asset URL"
                       />
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateAvatarSettings({
+                              assetUrl: DEFAULT_SOPHIA_AVATAR_ASSET_URL,
+                              style: "portrait",
+                            })
+                          }
+                          className="rounded-lg border border-uvb-neon-green/30 bg-uvb-deep-teal/20 px-3 py-1.5 text-xs text-uvb-neon-green hover:bg-uvb-deep-teal/30"
+                        >
+                          Use Sophia style sheet
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => avatarAssetInputRef.current?.click()}
+                          className="rounded-lg border border-uvb-border/30 px-3 py-1.5 text-xs text-uvb-text-secondary hover:border-uvb-steel-blue/40 hover:text-uvb-steel-blue"
+                        >
+                          Upload avatar image
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateAvatarSettings({ assetUrl: "__generated__", style: "orb" })}
+                          className="rounded-lg border border-uvb-border/30 px-3 py-1.5 text-xs text-uvb-text-muted hover:text-uvb-text-secondary"
+                        >
+                          Use generated fallback
+                        </button>
+                      </div>
+                      <input
+                        ref={avatarAssetInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => {
+                          void uploadAvatarAsset(event.target.files?.[0]);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                      <p className="mt-1 text-[11px] text-uvb-text-muted">
+                        Uploads are resized locally before saving. The bundled Sophia sheet is used as a 3D-styled crop in the overlay.
+                      </p>
                     </div>
                     <div className="md:col-span-2">
                       <label className="mb-1.5 block text-xs text-uvb-text-muted">Desktop Runtime URL</label>
