@@ -37,7 +37,7 @@ The built-in overlay consumes `activity` today. External runtimes should receive
 External engine code is intentionally staged under `.uvb/avatar-engines`, which is ignored by git.
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-avatar-engines.ps1 -Engine Both
+bun run avatar:bootstrap
 ```
 
 Add `-InstallDependencies` after confirming the Python/uv environment you want to use.
@@ -50,14 +50,18 @@ UVB includes a first-pass local template at:
 services/avatar/openavatarchat-uvb-liteavatar-cpu.yaml
 ```
 
-It points the OpenAI-compatible LLM handler at UVB's local endpoint on `http://127.0.0.1:8003/v1` and sets the LiteAvatar handler to `use_gpu: false`. OpenAvatarChat's own quick-start still needs dependency/model installation before this can run.
+It points the OpenAI-compatible LLM handler at UVB's local endpoint on `http://127.0.0.1:8003/v1`, uses Edge TTS to avoid the Windows `pynini` build trap in CosyVoice, and sets the LiteAvatar handler to `use_gpu: false`.
 
-Expected run shape from `.uvb/avatar-engines/OpenAvatarChat`:
+The current Windows-tested path is:
 
 ```powershell
+cd D:\UVB-KnightBot-Export\.uvb\avatar-engines\OpenAvatarChat
 uv run install.py --config D:\UVB-KnightBot-Export\services\avatar\openavatarchat-uvb-liteavatar-cpu.yaml
 uv run scripts/download_models.py --handler liteavatar
-uv run src/demo.py --config D:\UVB-KnightBot-Export\services\avatar\openavatarchat-uvb-liteavatar-cpu.yaml
+cd D:\UVB-KnightBot-Export
+bun run avatar:openavatarchat
 ```
+
+The launcher copies PyAV's bundled Opus DLL into the virtualenv script directory so `opuslib` can resolve it on Windows, starts OpenAvatarChat hidden, and writes logs to `.uvb/logs/openavatarchat.out.log` and `.uvb/logs/openavatarchat.err.log`. When healthy, the sidecar serves the OpenAvatarChat frontend at `http://127.0.0.1:8283`.
 
 The practical integration path is to let UVB remain the source of truth for identity, memory, Telegram, STT, LLM, and Kokoro, then use OpenAvatarChat/LiteAvatar as a local visual renderer once we have its WebRTC/video surface stable.
