@@ -50,9 +50,23 @@ DEFAULT_STT_PROMPT = (
     "boundaries, commas, periods, and question marks. Preserve the speaker's words exactly."
 )
 
+CURRENT_USER_SYSTEM_NOTE = (
+    "Current default UVB user: Richard. Username: TacImpulse. Telegram chat ID: "
+    "6953468234. Unless the latest user message explicitly says another person "
+    "is present or speaking, treat the current speaker as Richard / TacImpulse. "
+    "Jusstin is a separate person and friend, never the default speaker inferred "
+    "from alias rules or chat history. Known profile anchors: Richard is James "
+    "Richard Scott / TacImpulse, a 6'1\", about 220 lb, bald, bearded man. "
+    "Jusstin is separate, about 5'8\", slimmer, usually with head hair and little "
+    "significant facial hair. Do not swap their identities in conversation or "
+    "image descriptions."
+)
+
 ALIAS_SYSTEM_NOTE = (
-    "Alias rules: normalize Justin to Jusstin, Cody to Codee, and butt stuff to "
-    "Butt Stuff whenever they appear. Correct spellings: J-U-S-S-T-I-N and C-O-D-E-E."
+    "Alias rules are spelling-only normalization rules. They do not identify who "
+    "is currently speaking and must not override the current-user context. "
+    "Normalize Justin to Jusstin, Cody to Codee, and butt stuff to Butt Stuff "
+    "whenever they appear. Correct spellings: J-U-S-S-T-I-N and C-O-D-E-E."
 )
 
 
@@ -71,9 +85,17 @@ def truthy(value: Any) -> bool:
 
 def append_alias_system_note(value: str) -> str:
     value = value.strip()
-    if "J-U-S-S-T-I-N" in value and "C-O-D-E-E" in value and "Butt Stuff" in value:
-        return value
-    return "\n\n".join(part for part in (value, ALIAS_SYSTEM_NOTE) if part)
+    parts = [value] if value else []
+    if "Current default UVB user:" not in value:
+        parts.append(CURRENT_USER_SYSTEM_NOTE)
+    if not (
+        ("Alias rules are spelling-only" in value or "Alias rules: normalize" in value)
+        and "J-U-S-S-T-I-N" in value
+        and "C-O-D-E-E" in value
+        and "Butt Stuff" in value
+    ):
+        parts.append(ALIAS_SYSTEM_NOTE)
+    return "\n\n".join(parts)
 
 
 def alias_prompt(value: str) -> str:

@@ -35,7 +35,7 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   sttModel: "Systran/faster-distil-whisper-large-v3",
   sttLanguage: "en",
   sttPrompt:
-    "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly.",
+    "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly. Do not invent captions, outros, repeated filler words, or trailing thank-yous.",
   ttsUrl: "http://127.0.0.1:8880/v1/audio/speech",
   ttsVoice: "af_nova",
   autoSpeak: true,
@@ -50,7 +50,7 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   mossTtsVoice: "default",
   voiceProfileName: "Sophia / KnightBot Default",
   systemPrompt:
-    "You are KnightBot inside UVB, a local multimodal AI workspace. Be direct, useful, warm, and concise. You are speaking through the realtime voice cockpit, so keep replies conversational and interruptible.",
+    "You are KnightBot inside UVB, a local multimodal AI workspace. Be direct, useful, warm, and concise. Current default UVB user: Richard. Username: TacImpulse. Telegram chat ID: 6953468234. Unless the latest user message explicitly says another person is present or speaking, treat the current speaker as Richard / TacImpulse. Jusstin is a separate person and friend, never the default speaker inferred from alias rules or chat history. Known profile anchors: Richard is James Richard Scott / TacImpulse, a 6'1\", about 220 lb, bald, bearded man. Jusstin is separate, about 5'8\", slimmer, usually with head hair and little significant facial hair. Do not swap their identities in conversation or image descriptions. You are speaking through the realtime voice cockpit, so keep replies conversational and interruptible.",
 };
 
 export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): VoiceSettings {

@@ -13,13 +13,13 @@ const DEFAULT_STT_TIMEOUT_MS = Number.parseInt(process.env.UVB_STT_TIMEOUT_MS ??
 const DEFAULT_STT_VAD_FILTER = process.env.UVB_STT_VAD_FILTER ?? "true";
 const DEFAULT_STT_CONDITION_ON_PREVIOUS_TEXT =
   process.env.UVB_STT_CONDITION_ON_PREVIOUS_TEXT ?? "false";
-const DEFAULT_STT_NO_SPEECH_THRESHOLD = process.env.UVB_STT_NO_SPEECH_THRESHOLD ?? "0.6";
+const DEFAULT_STT_NO_SPEECH_THRESHOLD = process.env.UVB_STT_NO_SPEECH_THRESHOLD ?? "0.72";
 const DEFAULT_STT_COMPRESSION_RATIO_THRESHOLD =
-  process.env.UVB_STT_COMPRESSION_RATIO_THRESHOLD ?? "2.4";
-const DEFAULT_STT_LOG_PROB_THRESHOLD = process.env.UVB_STT_LOG_PROB_THRESHOLD ?? "-1.0";
+  process.env.UVB_STT_COMPRESSION_RATIO_THRESHOLD ?? "2.2";
+const DEFAULT_STT_LOG_PROB_THRESHOLD = process.env.UVB_STT_LOG_PROB_THRESHOLD ?? "-0.8";
 const DEFAULT_STT_PROMPT =
   process.env.UVB_STT_PROMPT ??
-  "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly.";
+  "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly. Do not invent captions, outros, repeated filler words, or trailing thank-yous.";
 
 function appendOptional(payload: FormData, key: string, value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();

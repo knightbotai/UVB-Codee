@@ -48,11 +48,11 @@ DEFAULT_VOICE_SETTINGS = {
     "sttConditionOnPreviousText": os.getenv(
         "UVB_STT_CONDITION_ON_PREVIOUS_TEXT", "false"
     ),
-    "sttNoSpeechThreshold": os.getenv("UVB_STT_NO_SPEECH_THRESHOLD", "0.6"),
+    "sttNoSpeechThreshold": os.getenv("UVB_STT_NO_SPEECH_THRESHOLD", "0.72"),
     "sttCompressionRatioThreshold": os.getenv(
-        "UVB_STT_COMPRESSION_RATIO_THRESHOLD", "2.4"
+        "UVB_STT_COMPRESSION_RATIO_THRESHOLD", "2.2"
     ),
-    "sttLogProbThreshold": os.getenv("UVB_STT_LOG_PROB_THRESHOLD", "-1.0"),
+    "sttLogProbThreshold": os.getenv("UVB_STT_LOG_PROB_THRESHOLD", "-0.8"),
     "sttHotwords": os.getenv("UVB_STT_HOTWORDS", ""),
     "ttsUrl": os.getenv("UVB_TTS_URL", "http://127.0.0.1:8880/v1/audio/speech"),
     "ttsVoice": os.getenv("UVB_TTS_VOICE", "af_nova"),
@@ -69,12 +69,25 @@ DEFAULT_VOICE_SETTINGS = {
     ),
 }
 
+CURRENT_USER_SYSTEM_NOTE = (
+    "Current default UVB user: Richard. Username: TacImpulse. Telegram chat ID: "
+    "6953468234. Unless the latest user message explicitly says another person "
+    "is present or speaking, treat the current speaker as Richard / TacImpulse. "
+    "Jusstin is a separate person and friend, never the default speaker inferred "
+    "from alias rules or chat history. Known profile anchors: Richard is James "
+    "Richard Scott / TacImpulse, a 6'1\", about 220 lb, bald, bearded man. "
+    "Jusstin is separate, about 5'8\", slimmer, usually with head hair and little "
+    "significant facial hair. Do not swap their identities in conversation or "
+    "image descriptions."
+)
+
 ALIAS_SYSTEM_NOTE = (
-    "Alias rules: if a person is referred to as Justin with one S, normalize it "
-    "to Jusstin with two S's. The correct spelling is J-U-S-S-T-I-N. If the "
-    "phrase butt stuff appears, normalize it to Butt Stuff with two T's in Butt "
-    "and capital B/S. If Cody appears, normalize it to Codee. The correct "
-    "assistant nickname is C-O-D-E-E."
+    "Alias rules are spelling-only normalization rules. They do not identify who "
+    "is currently speaking and must not override the current-user context. If a "
+    "person is referred to as Justin with one S, normalize it to Jusstin with two "
+    "S's. The correct spelling is J-U-S-S-T-I-N. If the phrase butt stuff appears, "
+    "normalize it to Butt Stuff with two T's in Butt and capital B/S. If Cody "
+    "appears, normalize it to Codee. The correct assistant nickname is C-O-D-E-E."
 )
 
 
@@ -120,8 +133,39 @@ def clean_stt_transcript(text: str) -> str:
     repeated_trailing_word_pattern = (
         r"\b([\w'-]+)\b(?:[\s,.;:!?-]+\1\b){2,}(?=[\s.?!]*$)"
     )
+    repeated_filler_pattern = (
+        r"\b(uh|um|ah|er|hmm|mm)\b(?:[\s,.;:!?-]+\1\b)+"
+    )
+    excessive_filler_run_pattern = (
+        r"(?:\b(?:uh|um|ah|er|hmm|mm)\b[\s,.;:!?-]*){4,}"
+    )
+    phantom_trailing_thanks_pattern = (
+        r"(?:[\s,.;:!?-]*(?:thank you|thanks|thanks for watching|thank you for watching)"
+        r"[\s,.;:!?-]*)+$"
+    )
+    phantom_repeated_thanks_pattern = (
+        r"\b(thank you|thanks)\b(?:[\s,.;:!?-]+\1\b)+"
+    )
 
     for _ in range(3):
+        cleaned = re.sub(
+            excessive_filler_run_pattern,
+            "uh, ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            repeated_filler_pattern,
+            r"\1",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            phantom_repeated_thanks_pattern,
+            r"\1",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         cleaned = re.sub(repeated_phrase_pattern, r"\1", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(
             repeated_trailing_word_pattern,
@@ -135,6 +179,7 @@ def clean_stt_transcript(text: str) -> str:
             cleaned,
             flags=re.IGNORECASE,
         )
+    cleaned = re.sub(phantom_trailing_thanks_pattern, "", cleaned, flags=re.IGNORECASE)
     return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
@@ -148,13 +193,20 @@ def apply_text_aliases(text: str) -> str:
 
 def append_alias_system_note(system_prompt: str) -> str:
     system_prompt = system_prompt.strip()
-    if (
-        ("J-U-S-S-T-I-N" in system_prompt or "Jusstin with two S" in system_prompt)
+    parts = [system_prompt] if system_prompt else []
+    if "Current default UVB user:" not in system_prompt:
+        parts.append(CURRENT_USER_SYSTEM_NOTE)
+    if not (
+        (
+            "Alias rules are spelling-only" in system_prompt
+            or "Alias rules: normalize" in system_prompt
+        )
+        and ("J-U-S-S-T-I-N" in system_prompt or "Jusstin with two S" in system_prompt)
         and "Butt Stuff" in system_prompt
         and "C-O-D-E-E" in system_prompt
     ):
-        return system_prompt
-    return "\n\n".join(part for part in (system_prompt, ALIAS_SYSTEM_NOTE) if part)
+        parts.append(ALIAS_SYSTEM_NOTE)
+    return "\n\n".join(parts)
 
 
 @dataclass

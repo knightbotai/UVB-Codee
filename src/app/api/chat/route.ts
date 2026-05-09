@@ -6,10 +6,14 @@ import {
   normalizeAliasRules,
   type AliasRule,
 } from "@/lib/nameAliases";
+import { appendCurrentUserSystemNote } from "@/lib/currentUserContext";
 
 const LLM_BASE_URL = process.env.UVB_LLM_BASE_URL ?? "http://127.0.0.1:8003/v1";
 const LLM_MODEL = process.env.UVB_LLM_MODEL ?? "qwen36-35b-a3b-heretic-nvfp4";
 const LLM_API_KEY = process.env.UVB_LLM_API_KEY ?? "uvb-local";
+const MAX_MODEL_HISTORY_MESSAGES = 18;
+const MAX_MODEL_TEXT_CHARS = 6_000;
+const MAX_MODEL_TOTAL_TEXT_CHARS = 70_000;
 
 type ChatRole = "system" | "user" | "assistant";
 
@@ -58,6 +62,10 @@ interface ChatCompletionAttempt {
   messages: ChatMessage[];
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const DEFAULT_SYSTEM_PROMPT =
   "You are KnightBot inside UVB, a local multimodal AI workspace. Be direct, useful, warm, and concise. You are currently connected through the UVB web interface.";
 
@@ -70,7 +78,8 @@ function normalizeBaseUrl(baseUrl: string) {
 }
 
 async function requestChatCompletion(attempt: ChatCompletionAttempt, aliasRules: AliasRule[]) {
-  const response = await fetch(`${attempt.baseUrl}/chat/completions`, {
+  const requestUrl = `${attempt.baseUrl}/chat/completions`;
+  const requestInit: RequestInit = {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -86,7 +95,26 @@ async function requestChatCompletion(attempt: ChatCompletionAttempt, aliasRules:
         enable_thinking: attempt.enableThinking,
       },
     }),
-  });
+  };
+  let response: Response | null = null;
+  let lastNetworkError: unknown = null;
+
+  for (let index = 0; index < 3; index += 1) {
+    try {
+      response = await fetch(requestUrl, requestInit);
+      break;
+    } catch (error) {
+      lastNetworkError = error;
+      await sleep(750 * (index + 1));
+    }
+  }
+
+  if (!response) {
+    const message = lastNetworkError instanceof Error ? lastNetworkError.message : "fetch failed";
+    throw new Error(
+      `Local model chat endpoint did not answer after retries. The model may still be loading or restarting. Last network error: ${message}`
+    );
+  }
 
   const rawText = await response.text();
   let data: OpenAIChatResponse | null = null;
@@ -122,6 +150,35 @@ function hasMessageContent(content: ChatMessage["content"]) {
   });
 }
 
+function trimTextForModel(text: string, maxChars = MAX_MODEL_TEXT_CHARS) {
+  if (text.length <= maxChars) return text;
+  const headChars = Math.floor(maxChars * 0.45);
+  const tailChars = Math.floor(maxChars * 0.55);
+  return `${text.slice(0, headChars).trim()}\n\n[...middle compacted to keep the local model request responsive...]\n\n${text
+    .slice(-tailChars)
+    .trim()}`;
+}
+
+function compactContentForModel(
+  content: ChatMessage["content"],
+  aliasRules: AliasRule[],
+  textBudget: { remaining: number }
+): ChatMessage["content"] {
+  const applyBudget = (text: string) => {
+    const aliased = applyNameAliases(text, aliasRules);
+    const maxChars = Math.max(800, Math.min(MAX_MODEL_TEXT_CHARS, textBudget.remaining));
+    const compacted = trimTextForModel(aliased, maxChars);
+    textBudget.remaining = Math.max(0, textBudget.remaining - compacted.length);
+    return compacted;
+  };
+
+  if (typeof content === "string") return applyBudget(content);
+
+  return content.map((part) =>
+    part.type === "text" ? { ...part, text: applyBudget(part.text) } : part
+  );
+}
+
 export async function POST(request: NextRequest) {
   let body: ChatRequestBody;
 
@@ -135,13 +192,14 @@ export async function POST(request: NextRequest) {
   const runtime = await loadRuntimeSettings();
   const settings = body.settings ?? runtime.modelSettings;
   const aliasRules = normalizeAliasRules(body.aliasRules);
-  const systemPrompt =
-    appendNameAliasSystemNote(
+  const systemPrompt = appendNameAliasSystemNote(
+    appendCurrentUserSystemNote(
       body.systemPrompt?.trim() ||
         runtime.voiceSettings.systemPrompt?.trim() ||
-        DEFAULT_SYSTEM_PROMPT,
-      aliasRules
-    );
+        DEFAULT_SYSTEM_PROMPT
+    ),
+    aliasRules
+  );
   const baseUrl = normalizeBaseUrl(settings.baseUrl || LLM_BASE_URL);
   const model = settings.model?.trim() || LLM_MODEL;
   const apiKey = settings.apiKey?.trim() || LLM_API_KEY;
@@ -153,24 +211,24 @@ export async function POST(request: NextRequest) {
     : 1200;
   const enableThinking = settings.enableThinking ?? false;
 
-    const messages: ChatMessage[] = [
+  const compactableMessages = userMessages
+    .filter(
+      (message) =>
+        (message.role === "user" || message.role === "assistant") &&
+        hasMessageContent(message.content)
+    )
+    .slice(-MAX_MODEL_HISTORY_MESSAGES);
+  const textBudget = { remaining: MAX_MODEL_TOTAL_TEXT_CHARS };
+  const compactedMessages = [...compactableMessages]
+    .reverse()
+    .map((message) => ({
+      ...message,
+      content: compactContentForModel(message.content, aliasRules, textBudget),
+    }))
+    .reverse();
+  const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
-    ...userMessages
-      .filter(
-        (message) =>
-          (message.role === "user" || message.role === "assistant") &&
-          hasMessageContent(message.content)
-      )
-      .map((message) => ({
-        ...message,
-        content:
-          typeof message.content === "string"
-            ? applyNameAliases(message.content, aliasRules)
-            : message.content.map((part) =>
-                part.type === "text" ? { ...part, text: applyNameAliases(part.text, aliasRules) } : part
-              ),
-      }))
-      .slice(-20),
+    ...compactedMessages,
   ];
 
   if (messages.length === 1) {

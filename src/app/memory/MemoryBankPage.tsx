@@ -630,7 +630,7 @@ export default function MemoryBankPage() {
         </div>
         <p className="text-xs leading-relaxed text-uvb-text-secondary">
           This page now reflects actual local UVB data: saved chat threads plus pinned memories stored in browser localStorage.
-          Manual memories can be created, edited, deleted, searched, and exported. Semantic embeddings and automatic retrieval into chat are still future work.
+          Manual memories can be created, edited, deleted, searched, exported, and injected into local chat context with recent conversation recall. Semantic embeddings remain staged for the deeper vector-memory pass.
         </p>
       </div>
         </>

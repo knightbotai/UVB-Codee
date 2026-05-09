@@ -15,7 +15,7 @@ const SERVICES = [
   {
     id: "llm",
     name: "Local LLM",
-    url: process.env.UVB_LLM_HEALTH_URL ?? "http://127.0.0.1:8003/v1/models",
+    url: process.env.UVB_LLM_HEALTH_URL ?? "http://127.0.0.1:8003/health",
   },
   {
     id: "stt",

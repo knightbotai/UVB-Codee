@@ -5,6 +5,9 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 const LOG_PATH = path.join(process.cwd(), ".uvb", "telegram-chats.json");
+const MAX_STORED_MESSAGE_CHARS = 12_000;
+const MAX_STORED_THREAD_MESSAGES = 180;
+const COMPACTION_MESSAGE_PREFIX = "[UVB Telegram thread compacted]";
 
 type TelegramLogMessage = {
   id: string;
@@ -35,6 +38,70 @@ function safeType(value: unknown): TelegramLogMessage["type"] {
   return value === "voice" || value === "image" || value === "video" ? value : "text";
 }
 
+function compactText(value: string, maxChars = MAX_STORED_MESSAGE_CHARS) {
+  if (value.length <= maxChars) return value;
+  const headChars = Math.floor(maxChars * 0.45);
+  const tailChars = Math.floor(maxChars * 0.55);
+  return `${value.slice(0, headChars).trim()}\n\n[...middle compacted to keep Telegram chat logs responsive...]\n\n${value
+    .slice(-tailChars)
+    .trim()}`;
+}
+
+function summarizeMessages(messages: TelegramLogMessage[]) {
+  return messages
+    .slice(-30)
+    .map((message) => {
+      const compact = message.content.replace(/\s+/g, " ").slice(0, 180);
+      return `- ${message.role.toUpperCase()} ${new Date(message.timestamp).toLocaleString()}: ${compact}`;
+    })
+    .join("\n");
+}
+
+function compactThread(thread: TelegramLogThread): TelegramLogThread {
+  const compactedMessages = thread.messages
+    .map((message) => ({
+      ...message,
+      content: compactText(message.content),
+    }))
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  if (compactedMessages.length <= MAX_STORED_THREAD_MESSAGES) {
+    return { ...thread, messages: compactedMessages };
+  }
+
+  const existingSummaries = compactedMessages.filter((message) =>
+    message.content.startsWith(COMPACTION_MESSAGE_PREFIX)
+  );
+  const normalMessages = compactedMessages.filter(
+    (message) => !message.content.startsWith(COMPACTION_MESSAGE_PREFIX)
+  );
+  const keepCount = Math.max(40, MAX_STORED_THREAD_MESSAGES - 1);
+  const olderMessages = normalMessages.slice(0, -keepCount);
+  const keptMessages = normalMessages.slice(-keepCount);
+  const previousSummary = existingSummaries.at(-1)?.content ?? "";
+  const summaryContent = compactText(
+    [
+      `${COMPACTION_MESSAGE_PREFIX}: ${olderMessages.length} older message(s) were distilled so this thread stays usable in UVB.`,
+      previousSummary ? `Previous compacted context:\n${previousSummary}` : "",
+      olderMessages.length ? `Recent older context before compaction:\n${summarizeMessages(olderMessages)}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+  );
+  const summaryMessage: TelegramLogMessage = {
+    id: `${thread.id}:compaction-summary`,
+    role: "assistant",
+    content: summaryContent,
+    timestamp: keptMessages[0]?.timestamp ? keptMessages[0].timestamp - 1 : Date.now(),
+    type: "text",
+  };
+
+  return {
+    ...thread,
+    messages: [summaryMessage, ...keptMessages].sort((a, b) => a.timestamp - b.timestamp),
+  };
+}
+
 async function readStore(): Promise<TelegramLogStore> {
   try {
     const parsed = JSON.parse(await readFile(LOG_PATH, "utf8")) as Partial<TelegramLogStore>;
@@ -49,13 +116,14 @@ async function readStore(): Promise<TelegramLogStore> {
             messages: Array.isArray(thread.messages)
               ? thread.messages.map((message) => ({
                   id: safeText(message.id, `telegram-message-${Math.random().toString(36).slice(2)}`),
-                  role: message.role === "assistant" ? "assistant" : "user",
-                  content: safeText(message.content),
+                  role: message.role === "assistant" ? ("assistant" as const) : ("user" as const),
+                  content: compactText(safeText(message.content)),
                   timestamp: typeof message.timestamp === "number" ? message.timestamp : Date.now(),
                   type: safeType(message.type),
                 }))
               : [],
           }))
+          .map(compactThread)
         : [],
     };
   } catch {
@@ -137,6 +205,8 @@ export async function POST(request: NextRequest) {
     }
   }
   thread.messages.sort((a, b) => a.timestamp - b.timestamp);
+  const compactedThread = compactThread(thread);
+  thread.messages = compactedThread.messages;
   store.threads.sort((a, b) => b.updatedAt - a.updatedAt);
 
   await writeStore(store);

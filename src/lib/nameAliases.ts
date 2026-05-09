@@ -16,7 +16,8 @@ export const DEFAULT_ALIAS_RULES: AliasRule[] = [
     pattern: "\\bjustin\\b",
     replacement: "Jusstin",
     enabled: true,
-    notes: "The correct spelling is J-U-S-S-T-I-N.",
+    notes:
+      "The correct spelling is J-U-S-S-T-I-N. This spelling rule does not mean Jusstin is the current speaker.",
   },
   {
     id: "butt-stuff-titlecase",
@@ -87,7 +88,8 @@ export function buildAliasSystemNote(rules: AliasRule[] = DEFAULT_ALIAS_RULES) {
   const activeRules = normalizeAliasRules(rules).filter((rule) => rule.enabled);
   if (!activeRules.length) return "";
   return [
-    "Alias rules: normalize these names/phrases whenever they appear in user input, assistant replies, captions, memories, or voice responses.",
+    "Alias rules are spelling-only normalization rules. They do not identify who is currently speaking and must not override the current-user context.",
+    "Normalize these names/phrases whenever they appear in user input, assistant replies, captions, memories, or voice responses.",
     ...activeRules.map((rule) => `- ${rule.label}: ${rule.pattern} -> ${rule.replacement}. ${rule.notes}`.trim()),
   ].join("\n");
 }
@@ -95,6 +97,12 @@ export function buildAliasSystemNote(rules: AliasRule[] = DEFAULT_ALIAS_RULES) {
 export function appendNameAliasSystemNote(systemPrompt: string, rules: AliasRule[] = DEFAULT_ALIAS_RULES) {
   const trimmed = systemPrompt.trim();
   const note = buildAliasSystemNote(rules);
-  if (!note || trimmed.includes("Alias rules: normalize")) return trimmed;
+  if (
+    !note ||
+    trimmed.includes("Alias rules are spelling-only") ||
+    trimmed.includes("Alias rules: normalize")
+  ) {
+    return trimmed;
+  }
   return [trimmed, note].filter(Boolean).join("\n\n");
 }

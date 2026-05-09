@@ -3,6 +3,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 const APP_STORE_KEY = "uvb:app-store";
 const MAX_PERSISTED_STORE_CHARS = 4_000_000;
+const MAX_PERSISTED_MESSAGE_CHARS = 12_000;
+const MAX_PERSISTED_THREAD_MESSAGES = 240;
 
 export interface ChatAttachment {
   id: string;
@@ -161,16 +163,34 @@ function normalizeAttachment(value: unknown): ChatAttachment | null {
   };
 }
 
-function stripAttachmentPayloads(thread: ChatThread): ChatThread {
-  return {
-    ...thread,
-    messages: thread.messages.map((message) => ({
+function compactPersistedText(value: string) {
+  if (value.length <= MAX_PERSISTED_MESSAGE_CHARS) return value;
+  const headChars = Math.floor(MAX_PERSISTED_MESSAGE_CHARS * 0.45);
+  const tailChars = Math.floor(MAX_PERSISTED_MESSAGE_CHARS * 0.55);
+  return `${value.slice(0, headChars).trim()}\n\n[...middle compacted for local storage stability...]\n\n${value
+    .slice(-tailChars)
+    .trim()}`;
+}
+
+function prepareThreadForStorage(thread: ChatThread): ChatThread {
+  const messages = thread.messages
+    .slice(-MAX_PERSISTED_THREAD_MESSAGES)
+    .map((message) => ({
       ...message,
+      content: compactPersistedText(message.content),
       attachments: message.attachments?.map((attachment) => ({
         ...attachment,
         dataUrl: undefined,
       })),
-    })),
+    }));
+
+  return {
+    ...thread,
+    messages,
+    context:
+      thread.messages.length > MAX_PERSISTED_THREAD_MESSAGES
+        ? `${thread.context ? `${thread.context}\n` : ""}localStorage: compacted to the latest ${MAX_PERSISTED_THREAD_MESSAGES} messages for browser storage stability.`
+        : thread.context,
   };
 }
 
@@ -182,7 +202,7 @@ function prunePersistedStore(rawValue: string): string {
     parsed.state = {
       ...parsed.state,
       threads: Array.isArray(parsed.state.threads)
-        ? parsed.state.threads.map((thread) => stripAttachmentPayloads(normalizeThread(thread)))
+        ? parsed.state.threads.map((thread) => prepareThreadForStorage(normalizeThread(thread)))
         : [],
     };
 
@@ -196,11 +216,13 @@ function getAppStorage() {
   return {
     getItem: (name: string) => {
       const rawValue = window.localStorage.getItem(name);
-      if (!rawValue || rawValue.length <= MAX_PERSISTED_STORE_CHARS) return rawValue;
+      if (!rawValue) return rawValue;
 
       const prunedValue = prunePersistedStore(rawValue);
       try {
-        window.localStorage.setItem(name, prunedValue);
+        if (prunedValue !== rawValue || rawValue.length > MAX_PERSISTED_STORE_CHARS) {
+          window.localStorage.setItem(name, prunedValue);
+        }
       } catch {
         // Keep returning the pruned value so hydration can preserve text chats.
       }
@@ -364,7 +386,7 @@ export const useAppStore = create<AppState>()(
       partialize: (state) => ({
         sidebarOpen: state.sidebarOpen,
         activeSection: state.activeSection,
-        threads: state.threads.map(stripAttachmentPayloads),
+        threads: state.threads.map(prepareThreadForStorage),
         activeThreadId: state.activeThreadId,
         podcastSeats: state.podcastSeats,
         currentUser: state.currentUser,

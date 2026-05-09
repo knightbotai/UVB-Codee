@@ -47,6 +47,13 @@ import {
   type IdentitySettings,
 } from "@/lib/identitySettings";
 import { appendNameAliasSystemNote, applyNameAliases, loadAliasRules } from "@/lib/nameAliases";
+import {
+  appendCurrentUserSystemNote,
+  DEFAULT_CURRENT_USER_CONTEXT,
+  type CurrentUserContext,
+} from "@/lib/currentUserContext";
+import { appendMemorySystemNote } from "@/lib/memoryContext";
+import { cleanSttTranscript } from "@/lib/sttCleanup";
 
 function generateId() {
   return Math.random().toString(36).substring(2, 11);
@@ -61,7 +68,7 @@ const LIVE_VOICE_STOP_FLUSH_MS = 2400;
 const LIVE_VOICE_FINAL_FLUSH_MS = 1500;
 const LIVE_VOICE_BUSY_RETRY_MS = 900;
 const MAX_IMAGE_ATTACHMENTS = 4;
-const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_SOURCE_IMAGE_BYTES = 96 * 1024 * 1024;
 const MAX_MODEL_IMAGE_PIXELS = 1_200_000;
 const MAX_MODEL_IMAGE_SIDE = 1600;
 const MODEL_IMAGE_JPEG_QUALITY = 0.86;
@@ -139,6 +146,37 @@ function compactModelMessage(message: ChatModelMessage): ChatModelMessage {
       part.type === "text" ? { ...part, text: trimModelText(part.text) } : part
     ),
   };
+}
+
+function buildRecentThreadMemoryNote() {
+  const { threads, activeThreadId } = useAppStore.getState();
+  const recallThreads = threads
+    .filter((thread) => thread.id !== activeThreadId && thread.messages.length)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 6);
+
+  if (!recallThreads.length) return "";
+
+  const threadNotes = recallThreads.map((thread) => {
+    const messages = thread.messages
+      .filter((message) => message.role === "user" || message.role === "assistant")
+      .slice(-4)
+      .map((message) => `${message.role.toUpperCase()}: ${trimModelText(message.content, 600)}`)
+      .join("\n");
+    return `- ${thread.title || "Untitled conversation"}:\n${messages}`;
+  });
+
+  return [
+    "Recent UVB conversation recall: use this as continuity context only when relevant. Current-user identity rules still take priority over old conversation wording.",
+    ...threadNotes,
+  ].join("\n");
+}
+
+function appendRecentThreadMemoryNote(systemPrompt: string) {
+  const trimmed = systemPrompt.trim();
+  if (trimmed.includes("Recent UVB conversation recall:")) return trimmed;
+  const note = buildRecentThreadMemoryNote();
+  return [trimmed, note].filter(Boolean).join("\n\n");
 }
 
 type TelegramLogThread = {
@@ -456,7 +494,8 @@ async function sendChatToModel(
   messages: ChatModelMessage[],
   settings: ModelSettings,
   systemPrompt: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  currentUserContext?: CurrentUserContext
 ) {
   const aliasRules = loadAliasRules();
   const normalizedMessages = messages.map((message) => ({
@@ -471,7 +510,12 @@ async function sendChatToModel(
   const requestBody = JSON.stringify({
     messages: normalizedMessages,
     settings,
-    systemPrompt: appendNameAliasSystemNote(systemPrompt, aliasRules),
+    systemPrompt: appendNameAliasSystemNote(
+      appendRecentThreadMemoryNote(
+        appendMemorySystemNote(appendCurrentUserSystemNote(systemPrompt, currentUserContext))
+      ),
+      aliasRules
+    ),
     aliasRules,
   });
   const requestInit: RequestInit = {
@@ -536,6 +580,12 @@ export default function ChatInterface() {
   const [identitySettings, setIdentitySettings] = useState<IdentitySettings>(() =>
     loadIdentitySettings()
   );
+  const currentUserContext: CurrentUserContext = {
+    displayName: identitySettings.userName || DEFAULT_CURRENT_USER_CONTEXT.displayName,
+    username: DEFAULT_CURRENT_USER_CONTEXT.username,
+    email: identitySettings.userEmail || DEFAULT_CURRENT_USER_CONTEXT.email,
+    telegramChatId: DEFAULT_CURRENT_USER_CONTEXT.telegramChatId,
+  };
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
   const [activityStatus, setActivityStatus] = useState("Ready for text, voice, and media.");
   const [lastFailedInput, setLastFailedInput] = useState<string | null>(null);
@@ -814,6 +864,7 @@ export default function ChatInterface() {
           }
 
           const existingMessageIds = new Set(existingThread.messages.map((message) => message.id));
+          const existingMessagesById = new Map(existingThread.messages.map((message) => [message.id, message]));
           for (const message of telegramThread.messages) {
             if (!existingMessageIds.has(message.id)) {
               addMessage(existingThread.id, {
@@ -824,6 +875,21 @@ export default function ChatInterface() {
                 type: message.type,
                 branch: "telegram",
               });
+            } else {
+              const existingMessage = existingMessagesById.get(message.id);
+              if (
+                existingMessage &&
+                (existingMessage.content !== message.content ||
+                  existingMessage.timestamp !== message.timestamp ||
+                  existingMessage.type !== message.type)
+              ) {
+                updateMessage(existingThread.id, message.id, {
+                  content: message.content,
+                  timestamp: message.timestamp,
+                  type: message.type,
+                  branch: "telegram",
+                });
+              }
             }
           }
         }
@@ -838,7 +904,7 @@ export default function ChatInterface() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [addMessage, addThread, updateThread]);
+  }, [addMessage, addThread, updateMessage, updateThread]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1235,7 +1301,7 @@ export default function ChatInterface() {
       const response = await sendChatToModel([
         ...priorMessages,
         compactModelMessage({ role: "user", content: buildModelContent(promptText, attachments) }),
-      ], voiceOptimizedModelSettings, voiceOptimizedSystemPrompt, abortController.signal);
+      ], voiceOptimizedModelSettings, voiceOptimizedSystemPrompt, abortController.signal, currentUserContext);
       setAvatarResponsePhase("writing");
       const aiMsg: ChatMessage = {
         id: generateId(),
@@ -1293,7 +1359,7 @@ export default function ChatInterface() {
   };
 
   const generateLiveVoiceResponse = async (threadId: string, transcript: string) => {
-    const cleanTranscript = applyNameAliases(transcript.trim(), loadAliasRules());
+    const cleanTranscript = applyNameAliases(cleanSttTranscript(transcript), loadAliasRules());
     if (!cleanTranscript || pipecatFallbackInFlightRef.current) return;
 
     pipecatFallbackInFlightRef.current = true;
@@ -1330,7 +1396,10 @@ export default function ChatInterface() {
         temperature: Math.min(currentModelSettings.temperature, 0.45),
       };
       const liveSystemPrompt = [
-        appendNameAliasSystemNote(currentVoiceSettings.systemPrompt, loadAliasRules()),
+        appendNameAliasSystemNote(
+          appendCurrentUserSystemNote(currentVoiceSettings.systemPrompt, currentUserContext),
+          loadAliasRules()
+        ),
         "Live voice response mode: answer in one or two short spoken sentences. No markdown, no lists, no headings unless the user explicitly asks.",
       ]
         .filter(Boolean)
@@ -1338,7 +1407,9 @@ export default function ChatInterface() {
       const response = await sendChatToModel(
         priorMessages,
         liveModelSettings,
-        liveSystemPrompt
+        liveSystemPrompt,
+        undefined,
+        currentUserContext
       );
       setAvatarResponsePhase("writing");
 
@@ -1460,7 +1531,7 @@ export default function ChatInterface() {
       throw new Error(data.error ?? "STT returned no transcript.");
     }
 
-    return applyNameAliases(data.text, loadAliasRules());
+    return applyNameAliases(cleanSttTranscript(data.text), loadAliasRules());
   };
 
   const stopVoiceLevelMonitor = async () => {
@@ -1743,7 +1814,7 @@ export default function ChatInterface() {
     }
 
     if (data.type === "transcript" && data.text) {
-      const text = applyNameAliases(data.text, loadAliasRules());
+      const text = applyNameAliases(cleanSttTranscript(data.text), loadAliasRules());
       const threadId = ensureThreadForLiveVoice(text);
       setLiveTranscript(text);
       addMessage(threadId, {
@@ -1826,7 +1897,10 @@ export default function ChatInterface() {
           modelSettings,
           voiceSettings: {
             ...voiceSettings,
-            systemPrompt: appendNameAliasSystemNote(voiceSettings.systemPrompt, loadAliasRules()),
+            systemPrompt: appendNameAliasSystemNote(
+              appendCurrentUserSystemNote(voiceSettings.systemPrompt, currentUserContext),
+              loadAliasRules()
+            ),
           },
           history,
         })
@@ -2004,7 +2078,10 @@ export default function ChatInterface() {
           scheduleLiveVoiceTurnFlush(LIVE_VOICE_STOP_FLUSH_MS);
         },
         onUserTranscript: (data: PipecatTranscriptData) => {
-          const transcript = applyNameAliases(data.text?.trim() ?? "", loadAliasRules());
+          const transcript = applyNameAliases(
+            cleanSttTranscript(data.text?.trim() ?? ""),
+            loadAliasRules()
+          );
           if (!transcript) return;
 
           setLiveTranscript(transcript);
@@ -2091,7 +2168,10 @@ export default function ChatInterface() {
           modelSettings: currentModelSettings,
           voiceSettings: {
             ...currentVoiceSettings,
-            systemPrompt: appendNameAliasSystemNote(currentVoiceSettings.systemPrompt, loadAliasRules()),
+            systemPrompt: appendNameAliasSystemNote(
+              appendCurrentUserSystemNote(currentVoiceSettings.systemPrompt, currentUserContext),
+              loadAliasRules()
+            ),
           },
         },
       },
@@ -2229,16 +2309,12 @@ export default function ChatInterface() {
       ).length;
       const remainingSlots = Math.max(0, MAX_IMAGE_ATTACHMENTS - currentImageCount);
       const acceptedImages = imageFiles.slice(0, remainingSlots);
-      const oversizedImages = acceptedImages.filter(
-        (file) => file.size > MAX_IMAGE_ATTACHMENT_BYTES
-      );
-      const readableImages = acceptedImages.filter(
-        (file) => file.size <= MAX_IMAGE_ATTACHMENT_BYTES
-      );
+      const oversizedImages = acceptedImages.filter((file) => file.size > MAX_SOURCE_IMAGE_BYTES);
+      const readableImages = acceptedImages.filter((file) => file.size <= MAX_SOURCE_IMAGE_BYTES);
 
       if (readableImages.length) {
         try {
-          setActivityStatus("Loading image preview...");
+          setActivityStatus("Normalizing image for local vision...");
           const attachments = await Promise.all(
             readableImages.map(async (file) => {
               const normalizedImage = await fileToModelImageDataUrl(file);
@@ -2263,9 +2339,9 @@ export default function ChatInterface() {
       if (imageFiles.length > acceptedImages.length) {
         setActivityStatus(`Attached ${readableImages.length} image(s). UVB keeps up to ${MAX_IMAGE_ATTACHMENTS} at once.`);
       } else if (oversizedImages.length) {
-        setActivityStatus("Some images were over 8 MB and were skipped.");
+        setActivityStatus("Some images were too large to decode safely and were skipped.");
       } else if (readableImages.length) {
-        setActivityStatus("Image attached. Send it, or add a note first.");
+        setActivityStatus("Image attached and downscaled for local vision. Send it, or add a note first.");
       }
     }
 

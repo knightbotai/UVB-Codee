@@ -45,22 +45,22 @@ const telegramSttConditionOnPreviousText = (
 const telegramSttNoSpeechThreshold = (
   process.env.TELEGRAM_STT_NO_SPEECH_THRESHOLD ??
   process.env.UVB_STT_NO_SPEECH_THRESHOLD ??
-  "0.6"
+  "0.72"
 ).trim();
 const telegramSttCompressionRatioThreshold = (
   process.env.TELEGRAM_STT_COMPRESSION_RATIO_THRESHOLD ??
   process.env.UVB_STT_COMPRESSION_RATIO_THRESHOLD ??
-  "2.4"
+  "2.2"
 ).trim();
 const telegramSttLogProbThreshold = (
   process.env.TELEGRAM_STT_LOG_PROB_THRESHOLD ??
   process.env.UVB_STT_LOG_PROB_THRESHOLD ??
-  "-1.0"
+  "-0.8"
 ).trim();
 const telegramSttPrompt = (
   process.env.TELEGRAM_STT_PROMPT ??
   process.env.UVB_STT_PROMPT ??
-  "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly. Use these spellings when spoken: Jusstin, Codee, Butt Stuff."
+  "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly. Do not invent captions, outros, repeated filler words, or trailing thank-yous. Use these spellings when spoken: Jusstin, Codee, Butt Stuff."
 ).trim();
 const telegramSttHotwords = (
   process.env.TELEGRAM_STT_HOTWORDS ??
@@ -90,6 +90,8 @@ const telegramUvbSttTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_STT_TIM
 const telegramUvbChatTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_CHAT_TIMEOUT_MS ?? "240000", 10);
 const telegramUvbTtsTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_TTS_TIMEOUT_MS ?? "120000", 10);
 const telegramLongThinkMs = Number.parseInt(process.env.TELEGRAM_LONG_THINK_MS ?? "25000", 10);
+const telegramHistoryMessages = Number.parseInt(process.env.TELEGRAM_HISTORY_MESSAGES ?? "12", 10);
+const telegramHistoryTextChars = Number.parseInt(process.env.TELEGRAM_HISTORY_TEXT_CHARS ?? "5000", 10);
 const apiBase = token ? `${telegramApiOrigin}/bot${token}` : "";
 const fileBase = token ? `${telegramFileOrigin}/file/bot${token}` : "";
 const histories = new Map();
@@ -115,14 +117,25 @@ function cleanSttTranscript(text) {
     /\b([\p{L}\p{N}'-]+(?:\s+[\p{L}\p{N}'-]+){1,4})\b(?:[\s,.;:!?-]+\1\b)+/giu;
   const repeatedTrailingWordPattern =
     /\b([\p{L}\p{N}'-]+)\b(?:[\s,.;:!?-]+\1\b){2,}(?=[\s.?!]*$)/giu;
+  const repeatedFillerPattern =
+    /\b(uh|um|ah|er|hmm|mm)\b(?:[\s,.;:!?-]+\1\b){1,}/giu;
+  const excessiveFillerRunPattern =
+    /(?:\b(?:uh|um|ah|er|hmm|mm)\b[\s,.;:!?-]*){4,}/giu;
+  const phantomTrailingThanksPattern =
+    /(?:[\s,.;:!?-]*(?:thank you|thanks|thanks for watching|thank you for watching)[\s,.;:!?-]*){1,}$/iu;
+  const phantomRepeatedThanksPattern =
+    /\b(thank you|thanks)\b(?:[\s,.;:!?-]+\1\b){1,}/giu;
 
   for (let index = 0; index < 3; index += 1) {
     cleaned = cleaned
+      .replace(excessiveFillerRunPattern, "uh, ")
+      .replace(repeatedFillerPattern, "$1")
+      .replace(phantomRepeatedThanksPattern, "$1")
       .replace(repeatedPhrasePattern, "$1")
       .replace(repeatedTrailingWordPattern, "$1")
       .replace(repeatedFunctionWordPattern, "$1");
   }
-  return cleaned.replace(/\s{2,}/g, " ").trim();
+  return cleaned.replace(phantomTrailingThanksPattern, "").replace(/\s{2,}/g, " ").trim();
 }
 
 function formatDuration(startedAt) {
@@ -135,6 +148,33 @@ function applyTelegramAliases(text) {
     .replace(/\bCody\b/g, "Codee")
     .replace(/\bBut Stuff\b/g, "Butt Stuff")
     .replace(/\bbut stuff\b/g, "Butt Stuff");
+}
+
+function compactModelText(text, maxChars = telegramHistoryTextChars) {
+  const cleanText = String(text || "");
+  const limit = Number.isFinite(maxChars) && maxChars >= 1000 ? maxChars : 5000;
+  if (cleanText.length <= limit) return cleanText;
+  const headChars = Math.floor(limit * 0.45);
+  const tailChars = Math.floor(limit * 0.55);
+  return `${cleanText.slice(0, headChars).trim()}\n\n[...middle compacted for Telegram bridge request size...]\n\n${cleanText.slice(-tailChars).trim()}`;
+}
+
+function compactModelContent(content) {
+  if (typeof content === "string") return compactModelText(content);
+  if (!Array.isArray(content)) return content;
+  return content.map((part) =>
+    part?.type === "text" ? { ...part, text: compactModelText(part.text) } : part
+  );
+}
+
+function compactHistoryMessages(messages) {
+  const maxMessages = Number.isFinite(telegramHistoryMessages) && telegramHistoryMessages > 2
+    ? Math.min(telegramHistoryMessages, 20)
+    : 12;
+  return messages.slice(-maxMessages).map((message) => ({
+    ...message,
+    content: compactModelContent(message.content),
+  }));
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 120000, label = "request") {
@@ -1004,8 +1044,8 @@ async function sendSpeech(chatId, text) {
 
 async function askKnightBot(chatId, content, logText) {
   const history = histories.get(chatId) ?? [];
-  const userMessage = { role: "user", content };
-  const messages = [...history, userMessage].slice(-20);
+  const userMessage = { role: "user", content: compactModelContent(content) };
+  const messages = compactHistoryMessages([...history, userMessage]);
   const startedAt = Date.now();
   logStage(`Routing chat ${chatId} to UVB chat: ${logText.slice(0, 120)}`);
 
@@ -1054,7 +1094,11 @@ async function askKnightBot(chatId, content, logText) {
   logStage(`UVB chat answered for chat ${chatId} in ${formatDuration(startedAt)}.`);
   histories.set(
     chatId,
-    [...history, { role: "user", content: logText }, { role: "assistant", content: data.content }].slice(-20)
+    compactHistoryMessages([
+      ...history,
+      { role: "user", content: logText },
+      { role: "assistant", content: data.content },
+    ])
   );
   return data.content;
 }
