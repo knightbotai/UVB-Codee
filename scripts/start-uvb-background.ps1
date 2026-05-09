@@ -3,14 +3,16 @@ param(
   [switch]$SkipVoiceAgent,
   [switch]$SkipPipecat,
   [switch]$BuildFirst,
-  [switch]$NoBrowser
+  [switch]$NoBrowser,
+  [switch]$SkipClean
 )
 
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $PSScriptRoot
+$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Port = 3010
 $Url = "http://localhost:$Port"
 $LogDir = Join-Path $Root ".uvb\logs"
+$LaunchStatusPath = Join-Path $Root ".uvb\last-launch.json"
 
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 Set-Location $Root
@@ -19,18 +21,96 @@ if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
   throw "Bun is required to launch UVB. Install Bun or add it to PATH, then retry."
 }
 
-if ($BuildFirst) {
-  bun run build
+function Write-LaunchLog {
+  param([string]$Message)
+  $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+  Write-Host "[$timestamp] $Message"
+}
+
+function Test-TcpListening {
+  param([int]$ListenPort)
+  $line = (& netstat -ano | Select-String -Pattern "[:.]$ListenPort\s+.*LISTENING" | Select-Object -First 1)
+  return [bool]$line
+}
+
+function Get-ListeningPid {
+  param([int]$ListenPort)
+  $line = (& netstat -ano | Select-String -Pattern "[:.]$ListenPort\s+.*LISTENING" | Select-Object -First 1)
+  if (-not $line) { return $null }
+  $parts = ($line.ToString() -split "\s+") | Where-Object { $_ }
+  return [int]$parts[-1]
+}
+
+function Stop-ProcessTree {
+  param([int]$ProcessId)
+  if ($ProcessId -le 0) { return }
+  try {
+    Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" |
+      ForEach-Object { Stop-ProcessTree -ProcessId $_.ProcessId }
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+  } catch {
+    Write-LaunchLog "Could not stop process tree rooted at PID ${ProcessId}: $($_.Exception.Message)"
+  }
+}
+
+function Stop-UvbWebProcesses {
+  $escapedRootForWmi = $Root.Replace("\", "\\")
+  $matches = Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%$escapedRootForWmi%'" |
+    Where-Object {
+      $_.ProcessId -ne $PID -and
+      (
+        $_.CommandLine -like "*bun run dev*" -or
+        $_.CommandLine -like "*next.exe dev*" -or
+        $_.CommandLine -like "*next\dist\bin\next*dev*" -or
+        $_.CommandLine -like "*start-server.js*" -or
+        $_.CommandLine -like "*.next\dev\build\postcss.js*"
+      )
+    }
+
+  $portPid = Get-ListeningPid -ListenPort $Port
+  if ($portPid) {
+    $portProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $portPid" -ErrorAction SilentlyContinue
+    if ($portProcess -and $portProcess.CommandLine -like "*$Root*") {
+      $matches = @($matches) + $portProcess
+    }
+  }
+
+  $pids = @($matches | Select-Object -ExpandProperty ProcessId -Unique)
+  foreach ($processId in $pids) {
+    Write-LaunchLog "Stopping stale UVB web process tree PID $processId."
+    Stop-ProcessTree -ProcessId $processId
+  }
+
+  Start-Sleep -Seconds 2
+}
+
+function Clear-UvbDevCache {
+  if ($SkipClean) { return }
+  foreach ($path in @((Join-Path $Root ".next\dev"), (Join-Path $Root ".next\cache"))) {
+    if (Test-Path $path) {
+      Write-LaunchLog "Clearing stale Next cache: $path"
+      Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
 }
 
 function Start-HiddenCommand {
   param(
     [Parameter(Mandatory = $true)] [string] $Name,
-    [Parameter(Mandatory = $true)] [string] $Command
+    [Parameter(Mandatory = $true)] [string] $Command,
+    [int]$PortGuard = 0
   )
+
+  if ($PortGuard -gt 0 -and (Test-TcpListening -ListenPort $PortGuard)) {
+    Write-LaunchLog "$Name already appears to be listening on port $PortGuard; not starting a duplicate."
+    return
+  }
 
   $outPath = Join-Path $LogDir "$Name.out.log"
   $errPath = Join-Path $LogDir "$Name.err.log"
+  Set-Content -LiteralPath $outPath -Value "[$(Get-Date -Format o)] Starting $Name from $Root`r`n" -NoNewline
+  Set-Content -LiteralPath $errPath -Value "[$(Get-Date -Format o)] Starting $Name from $Root`r`n" -NoNewline
+
   $escapedRoot = $Root.Replace('"', '\"')
   $escapedOut = $outPath.Replace('"', '\"')
   $escapedErr = $errPath.Replace('"', '\"')
@@ -43,12 +123,64 @@ function Start-HiddenCommand {
   $startInfo.UseShellExecute = $false
   $startInfo.CreateNoWindow = $true
 
-  [System.Diagnostics.Process]::Start($startInfo) | Out-Null
+  $process = [System.Diagnostics.Process]::Start($startInfo)
+  Write-LaunchLog "Started $Name launcher as PID $($process.Id)."
 }
+
+function Wait-Url {
+  param(
+    [Parameter(Mandatory = $true)] [string]$HealthUrl,
+    [int]$TimeoutSeconds = 45
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $lastError = ""
+  while ((Get-Date) -lt $deadline) {
+    try {
+      $response = Invoke-WebRequest -UseBasicParsing $HealthUrl -TimeoutSec 5
+      if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+        return $response
+      }
+    } catch {
+      $lastError = $_.Exception.Message
+    }
+    Start-Sleep -Seconds 1
+  }
+
+  throw "Timed out waiting for $HealthUrl. Last error: $lastError"
+}
+
+function Get-CommandLineMatch {
+  param([string]$Pattern)
+  Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%$Pattern%'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*$Root*" }
+}
+
+if ($BuildFirst) {
+  bun run build
+}
+
+Stop-UvbWebProcesses
+Clear-UvbDevCache
 
 Start-HiddenCommand `
   -Name "next-3010" `
-  -Command "bun run dev -- --port $Port"
+  -Command "bun run dev -- --port $Port" `
+  -PortGuard $Port
+
+$webResponse = Wait-Url -HealthUrl "$Url/api/health" -TimeoutSeconds 60
+$health = $webResponse.Content | ConvertFrom-Json
+$criticalServices = @("llm", "stt", "tts")
+$offlineCritical = @(
+  $health.services |
+    Where-Object { $criticalServices -contains $_.id -and -not $_.online } |
+    Select-Object -ExpandProperty id
+)
+if ($offlineCritical.Count -gt 0) {
+  Write-Warning "UVB web is online, but critical services are offline: $($offlineCritical -join ', ')"
+} else {
+  Write-LaunchLog "UVB web and critical local services are online."
+}
 
 if (-not $SkipVoiceAgent) {
   $pythonCommand = $null
@@ -62,7 +194,8 @@ if (-not $SkipVoiceAgent) {
     $voiceAgentPath = Join-Path $Root "services\voice-agent\voice_agent.py"
     Start-HiddenCommand `
       -Name "voice-agent" `
-      -Command "$pythonCommand `"$voiceAgentPath`""
+      -Command "$pythonCommand `"$voiceAgentPath`"" `
+      -PortGuard 8765
   } else {
     Write-Warning "Python was not found. UVB launched without the live voice sidecar."
   }
@@ -74,23 +207,40 @@ if (-not $SkipPipecat) {
     $pipecatAgentPath = Join-Path $Root "services\voice-agent\pipecat_agent.py"
     Start-HiddenCommand `
       -Name "pipecat-agent" `
-      -Command "`"$pipecatPython`" `"$pipecatAgentPath`""
+      -Command "`"$pipecatPython`" `"$pipecatAgentPath`"" `
+      -PortGuard 8766
   } else {
     Write-Warning "Pipecat venv was not found at $pipecatPython. Run: py -3.11 -m venv .venv-pipecat; .\.venv-pipecat\Scripts\python.exe -m pip install -r services\voice-agent\requirements-pipecat.txt"
   }
 }
 
 if (-not $SkipTelegram) {
-  Start-HiddenCommand `
-    -Name "telegram-worker" `
-    -Command "bun run telegram"
+  $existingTelegram = @(
+    Get-CommandLineMatch -Pattern "telegram-worker.mjs"
+    Get-CommandLineMatch -Pattern "bun run telegram"
+  )
+  if ($existingTelegram.Count -gt 0) {
+    Write-LaunchLog "telegram-worker already appears to be running; not starting a duplicate."
+  } else {
+    Start-HiddenCommand `
+      -Name "telegram-worker" `
+      -Command "bun run telegram"
+  }
 }
 
-Start-Sleep -Seconds 3
+$launchStatus = [ordered]@{
+  launchedAt = (Get-Date).ToString("o")
+  root = $Root
+  url = $Url
+  webOnline = $true
+  criticalServicesOnline = ($offlineCritical.Count -eq 0)
+  offlineCriticalServices = $offlineCritical
+}
+$launchStatus | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $LaunchStatusPath
 
 if (-not $NoBrowser) {
   Start-Process $Url | Out-Null
 }
 
-Write-Host "UVB launched quietly at $Url"
-Write-Host "Logs are in $LogDir"
+Write-LaunchLog "UVB launched at $Url"
+Write-LaunchLog "Logs are in $LogDir"

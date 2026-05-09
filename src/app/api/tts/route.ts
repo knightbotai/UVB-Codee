@@ -5,6 +5,7 @@ const DEFAULT_TTS_VOICE = process.env.UVB_TTS_VOICE ?? "af_nova";
 
 interface TtsRequestBody {
   text?: string;
+  input?: string;
   endpoint?: string;
   voice?: string;
 }
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const text = sanitizeTextForSpeech(body.text ?? "");
+  const text = sanitizeTextForSpeech(body.text ?? body.input ?? "");
   if (!text) {
     return NextResponse.json({ error: "Text is required." }, { status: 400 });
   }
@@ -38,18 +39,41 @@ export async function POST(request: NextRequest) {
   const endpoint = body.endpoint?.trim() || DEFAULT_TTS_URL;
   const voice = body.voice?.trim() || DEFAULT_TTS_VOICE;
 
-  try {
-    const response = await fetch(endpoint, {
+  const synthesize = (selectedVoice: string) =>
+    fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         input: text,
-        voice,
+        voice: selectedVoice,
       }),
     });
 
+  try {
+    let response = await synthesize(voice);
+
     if (!response.ok) {
       const rawText = await response.text();
+      const looksLikeInvalidVoice =
+        response.status === 400 &&
+        /voice .*not found|invalid_request_error|validation_error/i.test(rawText);
+
+      if (looksLikeInvalidVoice && voice !== DEFAULT_TTS_VOICE) {
+        response = await synthesize(DEFAULT_TTS_VOICE);
+        if (response.ok) {
+          const contentType = response.headers.get("content-type") ?? "audio/wav";
+          const audio = await response.arrayBuffer();
+
+          return new NextResponse(audio, {
+            headers: {
+              "Content-Type": contentType,
+              "Cache-Control": "no-store",
+              "X-UVB-TTS-Voice-Fallback": DEFAULT_TTS_VOICE,
+            },
+          });
+        }
+      }
+
       return NextResponse.json(
         { error: `TTS returned ${response.status}: ${rawText || response.statusText}` },
         { status: 502 }
