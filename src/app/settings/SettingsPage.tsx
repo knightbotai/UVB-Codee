@@ -63,6 +63,7 @@ import type {
   AgentSkillTrustTier,
 } from "@/lib/agentSkills";
 import {
+  DEFAULT_OWNER_PROFILE,
   DEFAULT_REMOTE_DOMAINS,
   type PublicUserProfile,
   type UserAuthProvider,
@@ -502,13 +503,13 @@ export default function SettingsPage() {
 
   const clearUserProfileDraft = () => {
     setProfileDraftId("");
-    setProfileDisplayName("");
-    setProfileUsername("");
-    setProfileEmail("");
-    setProfileRole("collaborator");
-    setProfileTelegramChatId("");
+    setProfileDisplayName(DEFAULT_OWNER_PROFILE.displayName);
+    setProfileUsername(DEFAULT_OWNER_PROFILE.username);
+    setProfileEmail(DEFAULT_OWNER_PROFILE.email);
+    setProfileRole(DEFAULT_OWNER_PROFILE.role);
+    setProfileTelegramChatId(DEFAULT_OWNER_PROFILE.telegramChatId);
     setProfileRemoteDomains(DEFAULT_REMOTE_DOMAINS.join(", "));
-    setProfileAccessModes(["local-browser", "telegram"]);
+    setProfileAccessModes(DEFAULT_OWNER_PROFILE.accessModes);
     setProfileAuthProviders(["local-password"]);
     setProfileGoogleSubject("");
     setProfilePassword("");
@@ -1029,7 +1030,7 @@ export default function SettingsPage() {
                         value={profileDisplayName}
                         onChange={(event) => setProfileDisplayName(event.target.value)}
                         className="input-field"
-                        placeholder="Jusstin"
+                        placeholder="Richard"
                       />
                     </div>
                     <div>
@@ -1038,7 +1039,7 @@ export default function SettingsPage() {
                         value={profileUsername}
                         onChange={(event) => setProfileUsername(event.target.value)}
                         className="input-field"
-                        placeholder="jusstin"
+                        placeholder="TACIMPULSE"
                       />
                     </div>
                     <div>
@@ -1231,7 +1232,7 @@ export default function SettingsPage() {
                     ))}
                     {!userProfiles.length && (
                       <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4 text-sm text-uvb-text-muted">
-                        No extra account profiles yet. Create one for Jusstin, yourself, or any future remote user.
+                        No extra account profiles yet. Richard / TACIMPULSE is the default owner; add Jusstin or other future remote users separately.
                       </div>
                     )}
                   </div>

@@ -35,6 +35,28 @@ export interface UserProfileStore {
 
 export const DEFAULT_REMOTE_DOMAINS = ["daplab.net", "tacimpulse.net"];
 
+export const DEFAULT_OWNER_PROFILE: StoredUserProfile = {
+  id: "profile:owner:richard",
+  displayName: "Richard",
+  username: "TACIMPULSE",
+  email: "richard@uvb.local",
+  role: "owner",
+  telegramChatId: "6953468234",
+  remoteDomains: DEFAULT_REMOTE_DOMAINS,
+  accessModes: ["local-browser", "telegram", "remote-browser"],
+  authProviders: ["local-password"],
+  googleSubject: "",
+  passkeyCredentialCount: 0,
+  passwordConfigured: false,
+  createdAt: 0,
+  updatedAt: 0,
+  notes: "Primary local owner profile for Richard / TACIMPULSE.",
+  passwordHash: "",
+  passwordSalt: "",
+  passwordIterations: 210_000,
+  passkeyCredentialIds: [],
+};
+
 export function normalizeProfileRole(value: unknown): UserProfileRole {
   return value === "collaborator" || value === "viewer" ? value : "owner";
 }

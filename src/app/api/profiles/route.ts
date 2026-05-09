@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import {
+  DEFAULT_OWNER_PROFILE,
   DEFAULT_REMOTE_DOMAINS,
   type PublicUserProfile,
   type StoredUserProfile,
@@ -65,7 +66,7 @@ function normalizeStoredProfile(profile: Partial<StoredUserProfile>): StoredUser
   return {
     id: safeText(profile.id, generateId()),
     displayName: safeText(profile.displayName, "UVB User"),
-    username: safeText(profile.username, safeText(profile.email, "uvb-user")).toLowerCase(),
+    username: safeText(profile.username, safeText(profile.email, "uvb-user")),
     email: safeText(profile.email),
     role: normalizeProfileRole(profile.role),
     telegramChatId: safeText(profile.telegramChatId),
@@ -92,11 +93,12 @@ function normalizeStoredProfile(profile: Partial<StoredUserProfile>): StoredUser
 async function readStore(): Promise<UserProfileStore> {
   try {
     const parsed = JSON.parse(await readFile(STORE_PATH, "utf8")) as Partial<UserProfileStore>;
+    const profiles = Array.isArray(parsed.profiles) ? parsed.profiles.map(normalizeStoredProfile) : [];
     return {
-      profiles: Array.isArray(parsed.profiles) ? parsed.profiles.map(normalizeStoredProfile) : [],
+      profiles: profiles.length ? profiles : [normalizeStoredProfile(DEFAULT_OWNER_PROFILE)],
     };
   } catch {
-    return { profiles: [] };
+    return { profiles: [normalizeStoredProfile(DEFAULT_OWNER_PROFILE)] };
   }
 }
 
@@ -175,7 +177,9 @@ export async function POST(request: NextRequest) {
   const withoutCurrent = store.profiles.filter((item) => item.id !== profile.id);
   if (
     withoutCurrent.some(
-      (item) => item.email.toLowerCase() === profile.email.toLowerCase() || item.username === profile.username
+      (item) =>
+        item.email.toLowerCase() === profile.email.toLowerCase() ||
+        item.username.toLowerCase() === profile.username.toLowerCase()
     )
   ) {
     return NextResponse.json({ error: "username or email already exists." }, { status: 409 });
