@@ -68,6 +68,8 @@ const MODEL_IMAGE_JPEG_QUALITY = 0.86;
 const DEFAULT_IMAGE_PROMPT = "Describe this image in great detail.";
 const MAX_TEXT_DOCUMENT_BYTES = 512 * 1024;
 const MAX_TEXT_DOCUMENT_CHARS = 120_000;
+const MAX_CHAT_HISTORY_MESSAGES = 16;
+const MAX_CHAT_HISTORY_TEXT_CHARS = 6_000;
 const IMAGE_FILE_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -116,6 +118,28 @@ type ChatModelMessage = {
   role: "user" | "assistant";
   content: string | ChatModelContentPart[];
 };
+
+function trimModelText(text: string, maxChars = MAX_CHAT_HISTORY_TEXT_CHARS) {
+  if (text.length <= maxChars) return text;
+  const headChars = Math.floor(maxChars * 0.45);
+  const tailChars = Math.floor(maxChars * 0.55);
+  return `${text.slice(0, headChars).trim()}\n\n[...middle omitted for local chat request size...]\n\n${text
+    .slice(-tailChars)
+    .trim()}`;
+}
+
+function compactModelMessage(message: ChatModelMessage): ChatModelMessage {
+  if (typeof message.content === "string") {
+    return { ...message, content: trimModelText(message.content) };
+  }
+
+  return {
+    ...message,
+    content: message.content.map((part) =>
+      part.type === "text" ? { ...part, text: trimModelText(part.text) } : part
+    ),
+  };
+}
 
 type TelegramLogThread = {
   id: string;
@@ -459,14 +483,8 @@ async function sendChatToModel(
   };
   let response: Response | null = null;
   const fetchErrors: string[] = [];
-  const urlCandidates = (() => {
-    if (typeof window === "undefined") return ["/api/chat"];
-    const origin = window.location.origin;
-    const candidates = ["/api/chat", `${origin}/api/chat`];
-    if (origin.includes("localhost:3010")) candidates.push("http://127.0.0.1:3010/api/chat");
-    if (origin.includes("127.0.0.1:3010")) candidates.push("http://localhost:3010/api/chat");
-    return Array.from(new Set(candidates));
-  })();
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const urlCandidates = origin ? [`${origin}/api/chat`, "/api/chat"] : ["/api/chat"];
   try {
     for (const candidate of urlCandidates) {
       try {
@@ -482,7 +500,6 @@ async function sendChatToModel(
     throw error;
   }
   if (!response) {
-    const origin = typeof window === "undefined" ? "" : window.location.origin;
     throw new Error(
       `Could not reach UVB chat API from ${origin || "this page"}. Tried ${fetchErrors.join("; ")}`
     );
@@ -1190,9 +1207,10 @@ export default function ChatInterface() {
       currentThread?.messages
         .filter((message) => message.id !== userMsg.id)
         .filter((message) => message.role === "user" || message.role === "assistant")
+        .slice(-MAX_CHAT_HISTORY_MESSAGES)
         .map((message) => ({
           role: message.role as "user" | "assistant",
-          content: message.content,
+          content: trimModelText(message.content),
         })) ?? [];
 
     try {
@@ -1216,7 +1234,7 @@ export default function ChatInterface() {
 
       const response = await sendChatToModel([
         ...priorMessages,
-        { role: "user", content: buildModelContent(promptText, attachments) },
+        compactModelMessage({ role: "user", content: buildModelContent(promptText, attachments) }),
       ], voiceOptimizedModelSettings, voiceOptimizedSystemPrompt, abortController.signal);
       setAvatarResponsePhase("writing");
       const aiMsg: ChatMessage = {
