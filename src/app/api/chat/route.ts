@@ -48,11 +48,66 @@ interface OpenAIChatResponse {
   };
 }
 
+interface ChatCompletionAttempt {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  temperature: number;
+  maxTokens: number;
+  enableThinking: boolean;
+  messages: ChatMessage[];
+}
+
 const DEFAULT_SYSTEM_PROMPT =
   "You are KnightBot inside UVB, a local multimodal AI workspace. Be direct, useful, warm, and concise. You are currently connected through the UVB web interface.";
 
 function normalizeBaseUrl(baseUrl: string) {
-  return baseUrl.trim().replace(/\/+$/, "");
+  const trimmed = baseUrl.trim();
+  if (/^https?:\/\/[^/]+:\d+v1$/i.test(trimmed)) {
+    return trimmed.replace(/v1$/i, "/v1");
+  }
+  return trimmed.replace(/\/+$/, "");
+}
+
+async function requestChatCompletion(attempt: ChatCompletionAttempt, aliasRules: AliasRule[]) {
+  const response = await fetch(`${attempt.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${attempt.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: attempt.model,
+      messages: attempt.messages,
+      temperature: attempt.temperature,
+      max_tokens: attempt.maxTokens,
+      stream: false,
+      chat_template_kwargs: {
+        enable_thinking: attempt.enableThinking,
+      },
+    }),
+  });
+
+  const rawText = await response.text();
+  let data: OpenAIChatResponse | null = null;
+
+  try {
+    data = rawText ? (JSON.parse(rawText) as OpenAIChatResponse) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    const message = data?.error?.message ?? rawText ?? response.statusText;
+    throw new Error(`Local model returned ${response.status}: ${message}`);
+  }
+
+  const content = applyNameAliases(data?.choices?.[0]?.message?.content?.trim() ?? "", aliasRules);
+  if (!content) {
+    throw new Error("Local model returned an empty response.");
+  }
+
+  return content;
 }
 
 function hasMessageContent(content: ChatMessage["content"]) {
@@ -123,52 +178,34 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-        stream: false,
-        chat_template_kwargs: {
-          enable_thinking: enableThinking,
-        },
-      }),
-    });
-
-    const rawText = await response.text();
-    let data: OpenAIChatResponse | null = null;
-
+    let content: string;
+    let responseModel = model;
     try {
-      data = rawText ? (JSON.parse(rawText) as OpenAIChatResponse) : null;
-    } catch {
-      data = null;
-    }
-
-    if (!response.ok) {
-      const message = data?.error?.message ?? rawText ?? response.statusText;
-      return NextResponse.json(
-        { error: `Local model returned ${response.status}: ${message}` },
-        { status: 502 }
+      content = await requestChatCompletion(
+        { baseUrl, model, apiKey, temperature, maxTokens, enableThinking, messages },
+        aliasRules
       );
-    }
-
-    const content = applyNameAliases(data?.choices?.[0]?.message?.content?.trim() ?? "", aliasRules);
-    if (!content) {
-      return NextResponse.json(
-        { error: "Local model returned an empty response." },
-        { status: 502 }
+    } catch (primaryError) {
+      const fallbackBaseUrl = normalizeBaseUrl(LLM_BASE_URL);
+      if (baseUrl === fallbackBaseUrl) throw primaryError;
+      content = await requestChatCompletion(
+        {
+          baseUrl: fallbackBaseUrl,
+          model: LLM_MODEL,
+          apiKey: LLM_API_KEY,
+          temperature,
+          maxTokens,
+          enableThinking,
+          messages,
+        },
+        aliasRules
       );
+      responseModel = LLM_MODEL;
     }
 
     return NextResponse.json({
       content,
-      model,
+      model: responseModel,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown model bridge error.";
