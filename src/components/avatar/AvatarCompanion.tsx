@@ -448,7 +448,14 @@ export default function AvatarCompanion() {
   const [settings, setSettings] = useState<AvatarSettings>(() => loadAvatarSettings());
   const [now, setNow] = useState(() => Date.now());
   const [failedAssetUrl, setFailedAssetUrl] = useState("");
-  const [externalCollapsed, setExternalCollapsed] = useState(false);
+  const [externalCollapsed, setExternalCollapsed] = useState(() => {
+    const initialSettings = loadAvatarSettings();
+    return (
+      initialSettings.runtime === "openavatarchat" ||
+      initialSettings.runtime === "liteavatar" ||
+      initialSettings.runtime === "custom"
+    );
+  });
   const activeThreadId = useAppStore((state) => state.activeThreadId);
   const threads = useAppStore((state) => state.threads);
   const isRecording = useAppStore((state) => state.isRecording);
@@ -464,7 +471,11 @@ export default function AvatarCompanion() {
       const nextSettings = loadAvatarSettings();
       setSettings(nextSettings);
       setFailedAssetUrl("");
-      setExternalCollapsed(false);
+      setExternalCollapsed(
+        nextSettings.runtime === "openavatarchat" ||
+          nextSettings.runtime === "liteavatar" ||
+          nextSettings.runtime === "custom"
+      );
       setCustomPosition(nextSettings.customPosition);
       dragPositionRef.current = nextSettings.customPosition;
     };

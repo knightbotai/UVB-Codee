@@ -1143,10 +1143,28 @@ export default function ChatInterface() {
         })) ?? [];
 
     try {
+      const voiceOptimizedModelSettings =
+        messageType === "voice"
+          ? {
+              ...modelSettings,
+              maxTokens: Math.min(modelSettings.maxTokens, 260),
+              temperature: Math.min(modelSettings.temperature, 0.5),
+            }
+          : modelSettings;
+      const voiceOptimizedSystemPrompt =
+        messageType === "voice"
+          ? [
+              voiceSettings.systemPrompt,
+              "Voice-message response mode: answer naturally in a few spoken sentences. Avoid markdown unless the user asks for structure.",
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : voiceSettings.systemPrompt;
+
       const response = await sendChatToModel([
         ...priorMessages,
         { role: "user", content: buildModelContent(promptText, attachments) },
-      ], modelSettings, voiceSettings.systemPrompt, abortController.signal);
+      ], voiceOptimizedModelSettings, voiceOptimizedSystemPrompt, abortController.signal);
       setAvatarResponsePhase("writing");
       const aiMsg: ChatMessage = {
         id: generateId(),
