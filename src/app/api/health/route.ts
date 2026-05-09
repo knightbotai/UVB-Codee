@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 interface ServiceCheck {
   id: string;
@@ -67,6 +69,20 @@ async function checkService(service: (typeof SERVICES)[number]): Promise<Service
   }
 }
 
+async function getGitCommit() {
+  try {
+    const gitDir = path.join(process.cwd(), ".git");
+    const head = (await readFile(path.join(gitDir, "HEAD"), "utf8")).trim();
+    if (head.startsWith("ref:")) {
+      const refPath = head.replace(/^ref:\s*/, "");
+      return (await readFile(path.join(gitDir, refPath), "utf8")).trim().slice(0, 7);
+    }
+    return head.slice(0, 7);
+  } catch {
+    return "unknown";
+  }
+}
+
 export async function GET() {
   const services = await Promise.race([
     Promise.all(SERVICES.map(checkService)),
@@ -91,6 +107,8 @@ export async function GET() {
     status: onlineCount === services.length ? "online" : onlineCount > 0 ? "degraded" : "offline",
     service: "UVB KnightBot",
     version: "0.1.0",
+    cwd: process.cwd(),
+    commit: await getGitCommit(),
     services,
     timestamp: new Date().toISOString(),
   });

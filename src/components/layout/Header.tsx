@@ -25,6 +25,8 @@ interface HealthService {
 
 interface HealthResponse {
   status: "online" | "degraded" | "offline";
+  cwd?: string;
+  commit?: string;
   services: HealthService[];
 }
 
@@ -146,6 +148,17 @@ export default function Header() {
                 >
                   close
                 </button>
+              </div>
+              <div className="mb-2 rounded-lg border border-uvb-border/40 bg-uvb-dark-gray/60 p-2">
+                <p className="truncate text-[10px] text-uvb-text-muted">
+                  Origin: {typeof window !== "undefined" ? window.location.origin : "browser"}
+                </p>
+                <p className="truncate text-[10px] text-uvb-text-muted">
+                  Repo: {health?.cwd ?? "unknown"}
+                </p>
+                <p className="text-[10px] text-uvb-text-muted">
+                  Commit: {health?.commit ?? "unknown"}
+                </p>
               </div>
               <div className="space-y-2">
                 {health?.services.map((service) => (
