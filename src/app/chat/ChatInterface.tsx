@@ -1422,6 +1422,14 @@ export default function ChatInterface() {
     formData.append("model", voiceSettings.sttModel);
     formData.append("language", voiceSettings.sttLanguage);
     formData.append("prompt", voiceSettings.sttPrompt);
+    formData.append("response_format", "json");
+    formData.append("temperature", "0");
+    formData.append("vad_filter", "true");
+    formData.append("condition_on_previous_text", "false");
+    formData.append("no_speech_threshold", "0.72");
+    formData.append("compression_ratio_threshold", "2.2");
+    formData.append("log_prob_threshold", "-0.8");
+    formData.append("hotwords", "Sophia, Richard, Jusstin, Codee, Butt Stuff");
     formData.append("aliasRules", JSON.stringify(loadAliasRules()));
 
     const response = await fetch("/api/stt", {

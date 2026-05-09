@@ -263,8 +263,20 @@ $launchStatus = [ordered]@{
 $launchStatus | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $LaunchStatusPath
 
 if (-not $NoBrowser) {
-  $launchUrl = "$Url/?uvbLaunch=$([Uri]::EscapeDataString((Get-Date).ToString("o")))"
-  Start-Process $launchUrl | Out-Null
+  $launchStamp = [Uri]::EscapeDataString((Get-Date).ToString("o"))
+  $launchUrl = "$Url/?uvbLaunch=$launchStamp&uvbSafeBoot=1"
+  $chromePath = Join-Path ${env:ProgramFiles} "Google\Chrome\Application\chrome.exe"
+  if (Test-Path $chromePath) {
+    Start-Process -FilePath $chromePath -ArgumentList @(
+      "--new-window",
+      "--disable-application-cache",
+      "--disk-cache-size=1",
+      "--media-cache-size=1",
+      $launchUrl
+    ) | Out-Null
+  } else {
+    Start-Process $launchUrl | Out-Null
+  }
 }
 
 Write-LaunchLog "UVB launched at $Url"
