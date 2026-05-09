@@ -440,17 +440,32 @@ async function sendChatToModel(
             part.type === "text" ? { ...part, text: applyNameAliases(part.text, aliasRules) } : part
           ),
   }));
-  const response = await fetch("/api/chat", {
+  const requestBody = JSON.stringify({
+    messages: normalizedMessages,
+    settings,
+    systemPrompt: appendNameAliasSystemNote(systemPrompt, aliasRules),
+    aliasRules,
+  });
+  const requestInit: RequestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages: normalizedMessages,
-      settings,
-      systemPrompt: appendNameAliasSystemNote(systemPrompt, aliasRules),
-      aliasRules,
-    }),
+    body: requestBody,
     signal,
-  });
+  };
+  let response: Response;
+  try {
+    response = await fetch("/api/chat", requestInit);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    const origin = typeof window === "undefined" ? "" : window.location.origin;
+    const retryUrl = origin ? `${origin}/api/chat` : "/api/chat";
+    try {
+      response = await fetch(retryUrl, requestInit);
+    } catch (retryError) {
+      const message = retryError instanceof Error ? retryError.message : String(retryError);
+      throw new Error(`Could not reach UVB chat API from ${origin || "this page"}: ${message}`);
+    }
+  }
   const data = (await response.json()) as { content?: string; error?: string };
 
   if (!response.ok || !data.content) {
