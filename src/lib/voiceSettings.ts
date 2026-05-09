@@ -28,6 +28,7 @@ export interface VoiceSettings {
 export const VOICE_SETTINGS_STORAGE_KEY = "uvb:voice-settings";
 export const VOICE_SETTINGS_UPDATED_EVENT = "uvb:voice-settings-updated";
 const LEGACY_DEFAULT_STT_MODEL = "Systran/faster-whisper-large-v3";
+const LEGACY_INVALID_TTS_VOICES = new Set(["af_sophia"]);
 
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   sttUrl: "http://127.0.0.1:8001/v1/audio/transcriptions",
@@ -65,7 +66,10 @@ export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): V
     sttLanguage: settings.sttLanguage?.trim() || DEFAULT_VOICE_SETTINGS.sttLanguage,
     sttPrompt: settings.sttPrompt?.trim() || DEFAULT_VOICE_SETTINGS.sttPrompt,
     ttsUrl: settings.ttsUrl?.trim() || DEFAULT_VOICE_SETTINGS.ttsUrl,
-    ttsVoice: settings.ttsVoice?.trim() || DEFAULT_VOICE_SETTINGS.ttsVoice,
+    ttsVoice:
+      settings.ttsVoice?.trim() && !LEGACY_INVALID_TTS_VOICES.has(settings.ttsVoice.trim())
+        ? settings.ttsVoice.trim()
+        : DEFAULT_VOICE_SETTINGS.ttsVoice,
     autoSpeak: settings.autoSpeak ?? DEFAULT_VOICE_SETTINGS.autoSpeak,
     volume: Number.isFinite(volume)
       ? Math.min(1, Math.max(0, volume))

@@ -21,13 +21,22 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   enableThinking: false,
 };
 
+function normalizeBaseUrl(baseUrl: string) {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) return DEFAULT_MODEL_SETTINGS.baseUrl;
+  if (/^https?:\/\/[^/]+:\d+v1$/i.test(trimmed)) {
+    return trimmed.replace(/v1$/i, "/v1");
+  }
+  return trimmed.replace(/\/+$/, "");
+}
+
 export function normalizeModelSettings(settings: Partial<ModelSettings> = {}): ModelSettings {
   const temperature = Number(settings.temperature);
   const maxTokens = Number(settings.maxTokens);
 
   return {
     provider: settings.provider?.trim() || DEFAULT_MODEL_SETTINGS.provider,
-    baseUrl: settings.baseUrl?.trim() || DEFAULT_MODEL_SETTINGS.baseUrl,
+    baseUrl: normalizeBaseUrl(settings.baseUrl ?? DEFAULT_MODEL_SETTINGS.baseUrl),
     model: settings.model?.trim() || DEFAULT_MODEL_SETTINGS.model,
     apiKey: settings.apiKey?.trim() || DEFAULT_MODEL_SETTINGS.apiKey,
     temperature: Number.isFinite(temperature) ? temperature : DEFAULT_MODEL_SETTINGS.temperature,

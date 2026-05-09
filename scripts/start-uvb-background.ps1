@@ -77,11 +77,34 @@ function Stop-UvbWebProcesses {
 
   $pids = @($matches | Select-Object -ExpandProperty ProcessId -Unique)
   foreach ($processId in $pids) {
-    Write-LaunchLog "Stopping stale UVB web process tree PID $processId."
+    Write-LaunchLog "Stopping existing UVB web process tree PID $processId."
     Stop-ProcessTree -ProcessId $processId
   }
 
   Start-Sleep -Seconds 2
+}
+
+function Stop-UvbSidecarProcesses {
+  $escapedRootForWmi = $Root.Replace("\", "\\")
+  $matches = Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%$escapedRootForWmi%'" |
+    Where-Object {
+      $_.ProcessId -ne $PID -and
+      (
+        $_.CommandLine -like "*services\voice-agent\voice_agent.py*" -or
+        $_.CommandLine -like "*services\voice-agent\pipecat_agent.py*" -or
+        $_.CommandLine -like "*scripts/telegram-worker.mjs*" -or
+        $_.CommandLine -like "*scripts\telegram-worker.mjs*" -or
+        $_.CommandLine -like "*bun run telegram*"
+      )
+    }
+
+  $pids = @($matches | Select-Object -ExpandProperty ProcessId -Unique)
+  foreach ($processId in $pids) {
+    Write-LaunchLog "Stopping existing UVB sidecar process tree PID $processId."
+    Stop-ProcessTree -ProcessId $processId
+  }
+
+  Start-Sleep -Seconds 1
 }
 
 function Clear-UvbDevCache {
@@ -161,6 +184,7 @@ if ($BuildFirst) {
 }
 
 Stop-UvbWebProcesses
+Stop-UvbSidecarProcesses
 Clear-UvbDevCache
 
 Start-HiddenCommand `
@@ -239,7 +263,8 @@ $launchStatus = [ordered]@{
 $launchStatus | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $LaunchStatusPath
 
 if (-not $NoBrowser) {
-  Start-Process $Url | Out-Null
+  $launchUrl = "$Url/?uvbLaunch=$([Uri]::EscapeDataString((Get-Date).ToString("o")))"
+  Start-Process $launchUrl | Out-Null
 }
 
 Write-LaunchLog "UVB launched at $Url"

@@ -28,12 +28,16 @@ import {
 import { Bot, Sparkles } from "lucide-react";
 import VoiceVisualizer from "@/components/animated/VoiceVisualizer";
 import {
+  DEFAULT_MODEL_SETTINGS,
   loadModelSettings,
   MODEL_SETTINGS_UPDATED_EVENT,
+  saveModelSettings,
   type ModelSettings,
 } from "@/lib/modelSettings";
 import {
+  DEFAULT_VOICE_SETTINGS,
   loadVoiceSettings,
+  saveVoiceSettings,
   VOICE_SETTINGS_UPDATED_EVENT,
   type VoiceSettings,
 } from "@/lib/voiceSettings";
@@ -448,23 +452,40 @@ async function sendChatToModel(
   });
   const requestInit: RequestInit = {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     body: requestBody,
     signal,
+    cache: "no-store",
   };
-  let response: Response;
+  let response: Response | null = null;
+  const fetchErrors: string[] = [];
+  const urlCandidates = (() => {
+    if (typeof window === "undefined") return ["/api/chat"];
+    const origin = window.location.origin;
+    const candidates = ["/api/chat", `${origin}/api/chat`];
+    if (origin.includes("localhost:3010")) candidates.push("http://127.0.0.1:3010/api/chat");
+    if (origin.includes("127.0.0.1:3010")) candidates.push("http://localhost:3010/api/chat");
+    return Array.from(new Set(candidates));
+  })();
   try {
-    response = await fetch("/api/chat", requestInit);
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    const origin = typeof window === "undefined" ? "" : window.location.origin;
-    const retryUrl = origin ? `${origin}/api/chat` : "/api/chat";
-    try {
-      response = await fetch(retryUrl, requestInit);
-    } catch (retryError) {
-      const message = retryError instanceof Error ? retryError.message : String(retryError);
-      throw new Error(`Could not reach UVB chat API from ${origin || "this page"}: ${message}`);
+    for (const candidate of urlCandidates) {
+      try {
+        response = await fetch(candidate, requestInit);
+        break;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        fetchErrors.push(`${candidate}: ${message}`);
+      }
     }
+  } catch (error) {
+    throw error;
+  }
+  if (!response) {
+    const origin = typeof window === "undefined" ? "" : window.location.origin;
+    throw new Error(
+      `Could not reach UVB chat API from ${origin || "this page"}. Tried ${fetchErrors.join("; ")}`
+    );
   }
   const data = (await response.json()) as { content?: string; error?: string };
 
@@ -571,6 +592,23 @@ export default function ChatInterface() {
   const chatAbortRef = useRef<AbortController | null>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+
+  useEffect(() => {
+    const repairedModelSettings = loadModelSettings();
+    const repairedVoiceSettings = loadVoiceSettings();
+
+    saveModelSettings(repairedModelSettings);
+    saveVoiceSettings(repairedVoiceSettings);
+    setModelSettings(repairedModelSettings);
+    setVoiceSettings(repairedVoiceSettings);
+
+    if (
+      repairedModelSettings.baseUrl === DEFAULT_MODEL_SETTINGS.baseUrl &&
+      repairedVoiceSettings.ttsVoice === DEFAULT_VOICE_SETTINGS.ttsVoice
+    ) {
+      setActivityStatus("Ready for text, voice, and media.");
+    }
+  }, []);
 
   useEffect(() => {
     if (isSpeaking || liveVoicePhase === "speaking") {
