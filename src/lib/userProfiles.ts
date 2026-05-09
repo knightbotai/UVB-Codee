@@ -38,7 +38,7 @@ export const DEFAULT_REMOTE_DOMAINS = ["daplab.net", "tacimpulse.net"];
 export const DEFAULT_OWNER_PROFILE: StoredUserProfile = {
   id: "profile:owner:richard",
   displayName: "Richard",
-  username: "TACIMPULSE",
+  username: "TacImpulse",
   email: "richard@uvb.local",
   role: "owner",
   telegramChatId: "6953468234",
@@ -50,7 +50,7 @@ export const DEFAULT_OWNER_PROFILE: StoredUserProfile = {
   passwordConfigured: false,
   createdAt: 0,
   updatedAt: 0,
-  notes: "Primary local owner profile for Richard / TACIMPULSE.",
+  notes: "Primary local owner profile for Richard / TacImpulse.",
   passwordHash: "",
   passwordSalt: "",
   passwordIterations: 210_000,

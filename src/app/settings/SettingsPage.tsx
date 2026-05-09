@@ -1039,7 +1039,7 @@ export default function SettingsPage() {
                         value={profileUsername}
                         onChange={(event) => setProfileUsername(event.target.value)}
                         className="input-field"
-                        placeholder="TACIMPULSE"
+                        placeholder="TacImpulse"
                       />
                     </div>
                     <div>
@@ -1232,7 +1232,7 @@ export default function SettingsPage() {
                     ))}
                     {!userProfiles.length && (
                       <div className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 p-4 text-sm text-uvb-text-muted">
-                        No extra account profiles yet. Richard / TACIMPULSE is the default owner; add Jusstin or other future remote users separately.
+                        No extra account profiles yet. Richard / TacImpulse is the default owner; add Jusstin or other future remote users separately.
                       </div>
                     )}
                   </div>
