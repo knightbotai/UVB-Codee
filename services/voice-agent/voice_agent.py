@@ -37,9 +37,8 @@ DEFAULT_VOICE_SETTINGS = {
     "sttPrompt": os.getenv(
         "UVB_STT_PROMPT",
         (
-            "Transcribe spoken English with natural punctuation, capitalization, "
-            "sentence boundaries, commas, periods, and question marks. Preserve "
-            "the speaker's words exactly."
+            "Punctuated English transcript. Vocabulary: Sophia, Richard, "
+            "Jusstin, Codee, Butt Stuff."
         ),
     ),
     "sttResponseFormat": os.getenv("UVB_STT_RESPONSE_FORMAT", "json"),
@@ -133,6 +132,9 @@ def clean_stt_transcript(text: str) -> str:
     repeated_trailing_word_pattern = (
         r"\b([\w'-]+)\b(?:[\s,.;:!?-]+\1\b){2,}(?=[\s.?!]*$)"
     )
+    repeated_word_run_pattern = (
+        r"\b([\w'-]{2,})\b(?:[\s,.;:!?-]+\1\b){2,}"
+    )
     repeated_filler_pattern = (
         r"\b(uh|um|ah|er|hmm|mm)\b(?:[\s,.;:!?-]+\1\b)+"
     )
@@ -166,6 +168,12 @@ def clean_stt_transcript(text: str) -> str:
             cleaned,
             flags=re.IGNORECASE,
         )
+        cleaned = re.sub(
+            repeated_word_run_pattern,
+            r"\1",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         cleaned = re.sub(repeated_phrase_pattern, r"\1", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(
             repeated_trailing_word_pattern,
@@ -180,7 +188,20 @@ def clean_stt_transcript(text: str) -> str:
             flags=re.IGNORECASE,
         )
     cleaned = re.sub(phantom_trailing_thanks_pattern, "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
     return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def normalize_stt_prompt(prompt: str) -> str:
+    prompt = prompt.strip()
+    default_prompt = str(DEFAULT_VOICE_SETTINGS["sttPrompt"])
+    if (
+        not prompt
+        or len(prompt) > 220
+        or re.search(r"do not invent|preserve the speaker", prompt, re.IGNORECASE)
+    ):
+        return default_prompt
+    return prompt
 
 
 def apply_text_aliases(text: str) -> str:
@@ -257,6 +278,8 @@ async def transcribe_audio(audio_bytes: bytes, voice_settings: dict[str, Any]) -
             ("hotwords", "sttHotwords"),
         ):
             value = str(voice_settings.get(settings_key) or DEFAULT_VOICE_SETTINGS[settings_key]).strip()
+            if settings_key == "sttPrompt":
+                value = normalize_stt_prompt(value)
             if value:
                 form.add_field(field_name, value)
 

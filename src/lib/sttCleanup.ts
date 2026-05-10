@@ -4,6 +4,8 @@ const REPEATED_PHRASE_PATTERN =
   /\b([\p{L}\p{N}'-]+(?:\s+[\p{L}\p{N}'-]+){1,4})\b(?:[\s,.;:!?-]+\1\b)+/giu;
 const REPEATED_TRAILING_WORD_PATTERN =
   /\b([\p{L}\p{N}'-]+)\b(?:[\s,.;:!?-]+\1\b){2,}(?=[\s.?!]*$)/giu;
+const REPEATED_WORD_RUN_PATTERN =
+  /\b([\p{L}\p{N}'-]{2,})\b(?:[\s,.;:!?-]+\1\b){2,}/giu;
 const REPEATED_FILLER_PATTERN =
   /\b(uh|um|ah|er|hmm|mm)\b(?:[\s,.;:!?-]+\1\b){1,}/giu;
 const EXCESSIVE_FILLER_RUN_PATTERN =
@@ -20,9 +22,14 @@ export function cleanSttTranscript(text: string) {
       .replace(EXCESSIVE_FILLER_RUN_PATTERN, "uh, ")
       .replace(REPEATED_FILLER_PATTERN, "$1")
       .replace(PHANTOM_REPEATED_THANKS_PATTERN, "$1")
+      .replace(REPEATED_WORD_RUN_PATTERN, "$1")
       .replace(REPEATED_PHRASE_PATTERN, "$1")
       .replace(REPEATED_TRAILING_WORD_PATTERN, "$1")
       .replace(REPEATED_FUNCTION_WORD_PATTERN, "$1");
   }
-  return cleaned.replace(PHANTOM_TRAILING_THANKS_PATTERN, "").replace(/\s{2,}/g, " ").trim();
+  return cleaned
+    .replace(PHANTOM_TRAILING_THANKS_PATTERN, "")
+    .replace(/\s+([,.!?;:])/gu, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }

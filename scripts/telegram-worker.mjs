@@ -60,7 +60,7 @@ const telegramSttLogProbThreshold = (
 const telegramSttPrompt = (
   process.env.TELEGRAM_STT_PROMPT ??
   process.env.UVB_STT_PROMPT ??
-  "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly. Do not invent captions, outros, repeated filler words, or trailing thank-yous. Use these spellings when spoken: Jusstin, Codee, Butt Stuff."
+  "Punctuated English transcript. Vocabulary: Sophia, Richard, Jusstin, Codee, Butt Stuff."
 ).trim();
 const telegramSttHotwords = (
   process.env.TELEGRAM_STT_HOTWORDS ??
@@ -117,6 +117,8 @@ function cleanSttTranscript(text) {
     /\b([\p{L}\p{N}'-]+(?:\s+[\p{L}\p{N}'-]+){1,4})\b(?:[\s,.;:!?-]+\1\b)+/giu;
   const repeatedTrailingWordPattern =
     /\b([\p{L}\p{N}'-]+)\b(?:[\s,.;:!?-]+\1\b){2,}(?=[\s.?!]*$)/giu;
+  const repeatedWordRunPattern =
+    /\b([\p{L}\p{N}'-]{2,})\b(?:[\s,.;:!?-]+\1\b){2,}/giu;
   const repeatedFillerPattern =
     /\b(uh|um|ah|er|hmm|mm)\b(?:[\s,.;:!?-]+\1\b){1,}/giu;
   const excessiveFillerRunPattern =
@@ -131,11 +133,28 @@ function cleanSttTranscript(text) {
       .replace(excessiveFillerRunPattern, "uh, ")
       .replace(repeatedFillerPattern, "$1")
       .replace(phantomRepeatedThanksPattern, "$1")
+      .replace(repeatedWordRunPattern, "$1")
       .replace(repeatedPhrasePattern, "$1")
       .replace(repeatedTrailingWordPattern, "$1")
       .replace(repeatedFunctionWordPattern, "$1");
   }
-  return cleaned.replace(phantomTrailingThanksPattern, "").replace(/\s{2,}/g, " ").trim();
+  return cleaned
+    .replace(phantomTrailingThanksPattern, "")
+    .replace(/\s+([,.!?;:])/gu, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function normalizeSttPrompt(prompt) {
+  const cleanPrompt = String(prompt || "").trim();
+  if (
+    !cleanPrompt ||
+    cleanPrompt.length > 220 ||
+    /do not invent|preserve the speaker/i.test(cleanPrompt)
+  ) {
+    return "Punctuated English transcript. Vocabulary: Sophia, Richard, Jusstin, Codee, Butt Stuff.";
+  }
+  return cleanPrompt;
 }
 
 function formatDuration(startedAt) {
@@ -824,7 +843,7 @@ async function transcribeAudioBlob(blob, fileName) {
   form.append("file", blob, fileName || "telegram-audio.mp3");
   form.append("model", telegramSttModel);
   if (telegramSttLanguage) form.append("language", telegramSttLanguage);
-  if (telegramSttPrompt) form.append("prompt", telegramSttPrompt);
+  if (telegramSttPrompt) form.append("prompt", normalizeSttPrompt(telegramSttPrompt));
   if (telegramSttResponseFormat) form.append("response_format", telegramSttResponseFormat);
   if (telegramSttTemperature) form.append("temperature", telegramSttTemperature);
   if (telegramSttVadFilter) form.append("vad_filter", telegramSttVadFilter);

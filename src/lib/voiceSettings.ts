@@ -35,7 +35,7 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   sttModel: "Systran/faster-distil-whisper-large-v3",
   sttLanguage: "en",
   sttPrompt:
-    "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly. Do not invent captions, outros, repeated filler words, or trailing thank-yous.",
+    "Punctuated English transcript. Vocabulary: Sophia, Richard, Jusstin, Codee, Butt Stuff.",
   ttsUrl: "http://127.0.0.1:8880/v1/audio/speech",
   ttsVoice: "af_nova",
   autoSpeak: true,

@@ -46,8 +46,7 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 DEFAULT_STT_PROMPT = (
-    "Transcribe spoken English with natural punctuation, capitalization, sentence "
-    "boundaries, commas, periods, and question marks. Preserve the speaker's words exactly."
+    "Punctuated English transcript. Vocabulary: Sophia, Richard, Jusstin, Codee, Butt Stuff."
 )
 
 CURRENT_USER_SYSTEM_NOTE = (
@@ -99,7 +98,15 @@ def append_alias_system_note(value: str) -> str:
 
 
 def alias_prompt(value: str) -> str:
-    return append_alias_system_note(value)
+    value = value.strip()
+    if (
+        not value
+        or len(value) > 220
+        or "do not invent" in value.lower()
+        or "preserve the speaker" in value.lower()
+    ):
+        value = DEFAULT_STT_PROMPT
+    return value
 
 
 def stt_language(value: Any) -> Language:
