@@ -29,6 +29,15 @@ MOSS-TTS is now represented as two provider slots:
 Both are treated as OpenAI-compatible `/v1/audio/speech` style providers until
 we install a concrete local runtime.
 
+Piper is represented as a local Pipecat TTS option:
+
+- `piper-local`: open-source/local ONNX voice lane, no API key.
+
+Set `UVB_PIPER_VOICE_PATH` and optionally `UVB_PIPER_CONFIG_PATH`, then enable
+the full Pipecat pipeline in Settings to test Piper as the realtime audio-out
+provider. Paid/API-key Pipecat providers are intentionally not wired into the
+default UVB stack.
+
 ## Run
 
 ```powershell

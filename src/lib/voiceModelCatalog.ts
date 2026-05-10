@@ -91,6 +91,18 @@ export const VOICE_MODEL_CATALOG: VoiceModelCatalogItem[] = [
     notes: "Keep as the default realtime Sophia voice path.",
   },
   {
+    id: "piper-local-pipecat",
+    kind: "tts",
+    name: "Piper Local Pipecat TTS",
+    role: "Local open-source Pipecat TTS option",
+    status: "wired",
+    license: "MIT/open local runtime",
+    footprint: "Local ONNX voices, CPU-friendly",
+    strengths: ["No API key", "Runs locally", "Pipecat-native service option"],
+    endpointHint: "pipecat.services.piper.tts.PiperTTSService",
+    notes: "Selectable in UVB realtime settings. Requires a local Piper .onnx voice path and full Pipecat pipeline enabled for testing.",
+  },
+  {
     id: "chatterbox-turbo",
     kind: "tts",
     name: "Resemble Chatterbox Turbo",

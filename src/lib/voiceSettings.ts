@@ -9,16 +9,20 @@ export interface VoiceSettings {
   volume: number;
   liveVoiceUrl: string;
   liveWebRtcUrl: string;
+  liveFullPipeline: boolean;
   liveTransport: "websocket" | "small-webrtc" | "webrtc" | "livekit";
   liveSttProvider: "faster-whisper" | "parakeet-realtime-eou" | "custom";
   liveTtsProvider:
     | "kokoro"
+    | "piper-local"
     | "moss-tts-nano"
     | "moss-ttsd"
     | "chatterbox-turbo"
     | "vibevoice-realtime"
     | "custom";
   liveVadProvider: "browser-manual" | "silero" | "ten-vad";
+  piperVoicePath: string;
+  piperConfigPath: string;
   mossTtsUrl: string;
   mossTtsVoice: string;
   voiceProfileName: string;
@@ -42,10 +46,13 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   volume: 0.9,
   liveVoiceUrl: "ws://127.0.0.1:8765/live",
   liveWebRtcUrl: "http://127.0.0.1:8766/api/offer",
+  liveFullPipeline: false,
   liveTransport: "small-webrtc",
   liveSttProvider: "faster-whisper",
   liveTtsProvider: "kokoro",
   liveVadProvider: "browser-manual",
+  piperVoicePath: "",
+  piperConfigPath: "",
   mossTtsUrl: "http://127.0.0.1:8890/v1/audio/speech",
   mossTtsVoice: "default",
   voiceProfileName: "Sophia / KnightBot Default",
@@ -76,6 +83,7 @@ export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): V
       : DEFAULT_VOICE_SETTINGS.volume,
     liveVoiceUrl: settings.liveVoiceUrl?.trim() || DEFAULT_VOICE_SETTINGS.liveVoiceUrl,
     liveWebRtcUrl: settings.liveWebRtcUrl?.trim() || DEFAULT_VOICE_SETTINGS.liveWebRtcUrl,
+    liveFullPipeline: settings.liveFullPipeline ?? DEFAULT_VOICE_SETTINGS.liveFullPipeline,
     liveTransport: ["websocket", "small-webrtc", "webrtc", "livekit"].includes(
       settings.liveTransport ?? ""
     )
@@ -88,6 +96,7 @@ export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): V
       : DEFAULT_VOICE_SETTINGS.liveSttProvider,
     liveTtsProvider: [
       "kokoro",
+      "piper-local",
       "moss-tts-nano",
       "moss-ttsd",
       "chatterbox-turbo",
@@ -101,6 +110,8 @@ export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): V
     )
       ? (settings.liveVadProvider as VoiceSettings["liveVadProvider"])
       : DEFAULT_VOICE_SETTINGS.liveVadProvider,
+    piperVoicePath: settings.piperVoicePath?.trim() || DEFAULT_VOICE_SETTINGS.piperVoicePath,
+    piperConfigPath: settings.piperConfigPath?.trim() || DEFAULT_VOICE_SETTINGS.piperConfigPath,
     mossTtsUrl: settings.mossTtsUrl?.trim() || DEFAULT_VOICE_SETTINGS.mossTtsUrl,
     mossTtsVoice: settings.mossTtsVoice?.trim() || DEFAULT_VOICE_SETTINGS.mossTtsVoice,
     voiceProfileName:

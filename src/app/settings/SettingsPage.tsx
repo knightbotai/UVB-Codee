@@ -1429,6 +1429,22 @@ export default function SettingsPage() {
                             <option value="ten-vad">TEN VAD / Turn Detection staged</option>
                           </select>
                         </div>
+                        <div className="col-span-2 rounded-lg border border-uvb-steel-blue/20 bg-uvb-steel-blue/10 p-3">
+                          <label className="flex items-center gap-2 text-xs font-semibold text-uvb-text-primary">
+                            <input
+                              type="checkbox"
+                              checked={voiceSettings.liveFullPipeline}
+                              onChange={(event) =>
+                                updateVoiceSettings({ liveFullPipeline: event.target.checked })
+                              }
+                            />
+                            Run full Pipecat STT → LLM → TTS pipeline
+                          </label>
+                          <p className="mt-1 text-[11px] leading-relaxed text-uvb-text-muted">
+                            Enables Pipecat-managed audio output, interruption, and provider shootouts.
+                            Leave off to keep UVB&apos;s browser fallback pipeline.
+                          </p>
+                        </div>
                         <div>
                           <label className="text-xs text-uvb-text-muted block mb-1.5">
                             Realtime STT Provider
@@ -1465,6 +1481,7 @@ export default function SettingsPage() {
                             }
                           >
                             <option value="kokoro">Kokoro fallback</option>
+                            <option value="piper-local">Piper local Pipecat TTS</option>
                             <option value="moss-tts-nano">MOSS-TTS-Nano candidate</option>
                             <option value="moss-ttsd">MOSS-TTSD expressive candidate</option>
                             <option value="chatterbox-turbo">Chatterbox Turbo staged</option>
@@ -1472,6 +1489,48 @@ export default function SettingsPage() {
                             <option value="custom">Custom provider</option>
                           </select>
                         </div>
+                        {voiceSettings.liveTtsProvider === "piper-local" && (
+                          <>
+                            <div className="col-span-2 rounded-lg border border-uvb-neon-green/20 bg-uvb-neon-green/10 p-3">
+                              <p className="text-xs font-semibold text-uvb-text-primary">
+                                Piper local Pipecat lane
+                              </p>
+                              <p className="mt-1 text-[11px] leading-relaxed text-uvb-text-muted">
+                                Piper is a local open-source TTS option for Pipecat. Point UVB at
+                                a local ONNX voice and optional config file, then enable the full
+                                Pipecat pipeline for a real latency test.
+                              </p>
+                            </div>
+                            <div>
+                              <label className="text-xs text-uvb-text-muted block mb-1.5">
+                                Piper Voice Path
+                              </label>
+                              <input
+                                type="text"
+                                value={voiceSettings.piperVoicePath}
+                                onChange={(event) =>
+                                  updateVoiceSettings({ piperVoicePath: event.target.value })
+                                }
+                                className="input-field"
+                                placeholder="Z:\\Models\\piper\\voice.onnx"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-uvb-text-muted block mb-1.5">
+                                Piper Config Path
+                              </label>
+                              <input
+                                type="text"
+                                value={voiceSettings.piperConfigPath}
+                                onChange={(event) =>
+                                  updateVoiceSettings({ piperConfigPath: event.target.value })
+                                }
+                                className="input-field"
+                                placeholder="Z:\\Models\\piper\\voice.onnx.json"
+                              />
+                            </div>
+                          </>
+                        )}
                         {(voiceSettings.liveTtsProvider === "moss-tts-nano" ||
                           voiceSettings.liveTtsProvider === "moss-ttsd") && (
                           <>

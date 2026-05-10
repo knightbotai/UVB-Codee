@@ -33,6 +33,11 @@ from pipecat.transports.smallwebrtc.request_handler import (
 )
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
+try:
+    from pipecat.services.piper.tts import PiperTTSService
+except Exception:  # noqa: BLE001 - optional provider extras.
+    PiperTTSService = None  # type: ignore[assignment]
+
 
 load_dotenv()
 
@@ -80,6 +85,10 @@ def normalize_base_url(value: str) -> str:
 
 def truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def provider(value: Any, fallback: str) -> str:
+    return str(value or fallback).strip().lower()
 
 
 def append_alias_system_note(value: str) -> str:
@@ -199,6 +208,9 @@ def create_app() -> FastAPI:
             ),
         )
 
+        stt_provider = provider(voice_settings.get("liveSttProvider"), "faster-whisper")
+        tts_provider = provider(voice_settings.get("liveTtsProvider"), "kokoro")
+
         stt = OpenAISTTService(
             api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
             base_url=normalize_base_url(
@@ -228,14 +240,37 @@ def create_app() -> FastAPI:
                 ),
                 model=str(model_settings.get("model") or env("UVB_LLM_MODEL", "qwen36-35b-a3b-heretic-nvfp4")),
             )
-            tts = OpenAITTSService(
-                api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
-                base_url=normalize_base_url(
-                    str(voice_settings.get("ttsUrl") or env("UVB_TTS_URL", "http://127.0.0.1:8880/v1"))
-                ),
-                model=env("UVB_TTS_MODEL", "tts-1"),
-                voice=str(voice_settings.get("ttsVoice") or env("UVB_TTS_VOICE", "af_nova")),
-            )
+            if tts_provider == "piper-local":
+                if PiperTTSService is None:
+                    raise RuntimeError(
+                        "Piper Pipecat TTS is not installed. Run the Pipecat installer after "
+                        "updating requirements-pipecat.txt."
+                    )
+                voice_path = str(
+                    voice_settings.get("piperVoicePath")
+                    or os.getenv("UVB_PIPER_VOICE_PATH")
+                    or ""
+                ).strip()
+                config_path = str(
+                    voice_settings.get("piperConfigPath")
+                    or os.getenv("UVB_PIPER_CONFIG_PATH")
+                    or ""
+                ).strip()
+                if not voice_path:
+                    raise RuntimeError("UVB_PIPER_VOICE_PATH or Piper Voice Path is required for local Piper TTS.")
+                kwargs: dict[str, Any] = {"voice_path": voice_path}
+                if config_path:
+                    kwargs["config_path"] = config_path
+                tts = PiperTTSService(**kwargs)
+            else:
+                tts = OpenAITTSService(
+                    api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
+                    base_url=normalize_base_url(
+                        str(voice_settings.get("ttsUrl") or env("UVB_TTS_URL", "http://127.0.0.1:8880/v1"))
+                    ),
+                    model=env("UVB_TTS_MODEL", "tts-1"),
+                    voice=str(voice_settings.get("ttsVoice") or env("UVB_TTS_VOICE", "af_nova")),
+                )
             context = LLMContext(
                 messages=[
                     {
@@ -299,6 +334,8 @@ def create_app() -> FastAPI:
             "llm": env("UVB_LLM_BASE_URL", "http://127.0.0.1:8003/v1"),
             "stt": env("UVB_STT_URL", "http://127.0.0.1:8001/v1/audio/transcriptions"),
             "tts": env("UVB_TTS_URL", "http://127.0.0.1:8880/v1/audio/speech"),
+            "piperInstalled": PiperTTSService is not None,
+            "piperConfigured": bool(os.getenv("UVB_PIPER_VOICE_PATH")),
         }
 
     @app.post("/api/offer")
