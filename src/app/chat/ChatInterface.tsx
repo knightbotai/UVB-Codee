@@ -655,6 +655,7 @@ export default function ChatInterface() {
   const recordingActionRef = useRef<"edit" | "send">("edit");
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const speechAudioUrlRef = useRef<string | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
 
@@ -2403,10 +2404,22 @@ export default function ChatInterface() {
     }
   };
 
-  const openAttachmentPicker = (accept: string) => {
-    if (!fileInputRef.current) return;
-    fileInputRef.current.accept = accept;
-    fileInputRef.current.click();
+  const openAttachmentPicker = (input: HTMLInputElement | null, label: string) => {
+    if (!input) {
+      setActivityStatus(`${label} picker is not ready. Refresh UVB and try again.`);
+      return;
+    }
+
+    try {
+      if (typeof input.showPicker === "function") {
+        input.showPicker();
+        return;
+      }
+    } catch {
+      // Browser support varies; fall back to the normal click path below.
+    }
+
+    input.click();
   };
 
   const speechControls = hasSpeechReady ? (
@@ -3103,11 +3116,8 @@ export default function ChatInterface() {
                 />
                 <div className="absolute right-2 bottom-2 flex gap-1">
                   <button
-                    onClick={() =>
-                      openAttachmentPicker(
-                        "image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif"
-                      )
-                    }
+                    type="button"
+                    onClick={() => openAttachmentPicker(imageFileInputRef.current, "Image")}
                     className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
                     title="Attach an image"
                     aria-label="Attach image"
@@ -3115,11 +3125,8 @@ export default function ChatInterface() {
                     <PhotoIcon className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() =>
-                      openAttachmentPicker(
-                        "video/*,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.log,.xml,.yaml,.yml,.ini,.toml,.env,.js,.jsx,.ts,.tsx,.mjs,.cjs,.css,.html,.py,.ps1,.sh,.sql,.pdf,.docx,.pptx,.xlsx"
-                      )
-                    }
+                    type="button"
+                    onClick={() => openAttachmentPicker(fileInputRef.current, "File")}
                     className="p-1 rounded text-uvb-text-muted hover:text-uvb-text-secondary transition-colors"
                     title="Attach media or file"
                     aria-label="Attach media or file"
@@ -3127,10 +3134,26 @@ export default function ChatInterface() {
                     <FilmIcon className="w-4 h-4" />
                   </button>
                   <input
+                    ref={imageFileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif"
+                    className="sr-only"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    onChange={(event) => {
+                      void attachFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                  <input
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    className="hidden"
+                    accept="video/*,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.log,.xml,.yaml,.yml,.ini,.toml,.env,.js,.jsx,.ts,.tsx,.mjs,.cjs,.css,.html,.py,.ps1,.sh,.sql,.pdf,.docx,.pptx,.xlsx"
+                    className="sr-only"
+                    tabIndex={-1}
+                    aria-hidden="true"
                     onChange={(event) => {
                       void attachFiles(event.target.files);
                       event.target.value = "";
