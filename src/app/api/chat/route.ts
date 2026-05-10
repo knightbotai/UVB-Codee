@@ -200,6 +200,23 @@ function latestUserText(messages: ChatMessage[]) {
   return latest ? textFromContent(latest.content).trim() : "";
 }
 
+function latestUserHasImage(messages: ChatMessage[]) {
+  const latest = [...messages].reverse().find((message) => message.role === "user");
+  if (!latest || !Array.isArray(latest.content)) return false;
+  return latest.content.some((part) => part.type === "image_url" && part.image_url.url.trim().length > 0);
+}
+
+function memorySearchQueryForLatestTurn(messages: ChatMessage[], aliasRules: AliasRule[]) {
+  const latestText = applyNameAliases(latestUserText(messages), aliasRules);
+  if (!latestUserHasImage(messages)) return latestText;
+  return [
+    latestText,
+    "visual reference gallery profile-reference identity appearance photo face hair beard build clothing Richard TacImpulse Jusstin",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function normalizeMemorySource(value: unknown): MemorySource {
   return value === "telegram" || value === "system" || value === "manual" ? value : "chat";
 }
@@ -218,8 +235,9 @@ export async function POST(request: NextRequest) {
   const settings = body.settings ?? runtime.modelSettings;
   const aliasRules = normalizeAliasRules(body.aliasRules);
   const memoryQuery = latestUserText(userMessages);
-  const retrievedMemories = memoryQuery
-    ? await searchMemoryEntries(applyNameAliases(memoryQuery, aliasRules), 8).catch(() => [])
+  const retrievalQuery = memorySearchQueryForLatestTurn(userMessages, aliasRules);
+  const retrievedMemories = retrievalQuery
+    ? await searchMemoryEntries(retrievalQuery, 10).catch(() => [])
     : [];
   const systemPrompt = appendNameAliasSystemNote(
     appendRetrievedMemorySystemNote(

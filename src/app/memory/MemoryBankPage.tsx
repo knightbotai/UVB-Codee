@@ -8,11 +8,12 @@ import {
   FolderIcon,
   MagnifyingGlassIcon,
   PencilSquareIcon,
+  PhotoIcon,
   PlusIcon,
   TagIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
-import { Brain, Database, HardDrive, Search } from "lucide-react";
+import { Brain, Camera, Database, HardDrive, ImageIcon, Search, Sparkles } from "lucide-react";
 import { useAppStore, type ChatThread } from "@/stores/appStore";
 import {
   DEFAULT_ALIAS_RULES,
@@ -47,6 +48,23 @@ interface MemoryBackendStatus {
   vectorSize: number;
   storeCount: number;
   lastError?: string;
+}
+
+interface ReferenceImageEntry {
+  id: string;
+  personName: string;
+  title: string;
+  relationship: string;
+  fileName: string;
+  imageMimeType: string;
+  imageDataUrl: string;
+  caption: string;
+  notes: string;
+  tags: string[];
+  memoryId: string;
+  analysisModel: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 const LOCAL_MEMORY_KEY = "uvb:manual-memory-bank";
@@ -142,12 +160,40 @@ function saveManualMemories(entries: MemoryEntry[]) {
   window.localStorage.setItem(LOCAL_MEMORY_KEY, JSON.stringify(entries));
 }
 
+async function imageFileToReferenceDataUrl(file: File, maxSide = 1200) {
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file.");
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read image."));
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error("Could not decode image."));
+    element.src = dataUrl;
+  });
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight, 1));
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not prepare image canvas.");
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", 0.88);
+}
+
 export default function MemoryBankPage() {
   const threads = useAppStore((state) => state.threads);
-  const [activeView, setActiveView] = useState<"memories" | "aliases">("memories");
+  const [activeView, setActiveView] = useState<"memories" | "references" | "aliases">("memories");
   const [serverEntries, setServerEntries] = useState<MemoryEntry[]>([]);
+  const [referenceEntries, setReferenceEntries] = useState<ReferenceImageEntry[]>([]);
   const [memoryBackend, setMemoryBackend] = useState<MemoryBackendStatus | null>(null);
   const [memoryStatus, setMemoryStatus] = useState("Loading server Memory Bank...");
+  const [referenceStatus, setReferenceStatus] = useState("Loading Reference Gallery...");
   const [aliasRules, setAliasRules] = useState<AliasRule[]>(loadAliasRules);
   const [aliasStatus, setAliasStatus] = useState("");
   const [aliasLabel, setAliasLabel] = useState("");
@@ -161,6 +207,16 @@ export default function MemoryBankPage() {
   const [newType, setNewType] = useState<MemoryType>("knowledge");
   const [newTags, setNewTags] = useState("");
   const [editingId, setEditingId] = useState("");
+  const [referenceEditingId, setReferenceEditingId] = useState("");
+  const [referencePersonName, setReferencePersonName] = useState("");
+  const [referenceTitle, setReferenceTitle] = useState("");
+  const [referenceRelationship, setReferenceRelationship] = useState("profile-reference");
+  const [referenceNotes, setReferenceNotes] = useState("");
+  const [referenceTags, setReferenceTags] = useState("");
+  const [referenceImageDataUrl, setReferenceImageDataUrl] = useState("");
+  const [referenceFileName, setReferenceFileName] = useState("");
+  const [referenceCaption, setReferenceCaption] = useState("");
+  const [referenceSaving, setReferenceSaving] = useState(false);
 
   const loadServerMemories = async (importLegacy = false) => {
     try {
@@ -209,6 +265,27 @@ export default function MemoryBankPage() {
 
   useEffect(() => {
     void loadServerMemories(true);
+  }, []);
+
+  const loadReferenceGallery = async () => {
+    try {
+      setReferenceStatus("Loading Reference Gallery...");
+      const response = await fetch("/api/memory/references", { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as {
+        entries?: ReferenceImageEntry[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || `Reference Gallery returned ${response.status}.`);
+      const entries = Array.isArray(data.entries) ? data.entries : [];
+      setReferenceEntries(entries);
+      setReferenceStatus(`Loaded ${entries.length} reference image${entries.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setReferenceStatus(error instanceof Error ? error.message : "Could not load Reference Gallery.");
+    }
+  };
+
+  useEffect(() => {
+    void loadReferenceGallery();
   }, []);
 
   const entries = useMemo(
@@ -291,6 +368,119 @@ export default function MemoryBankPage() {
     setNewTags("");
     setNewType("knowledge");
     setEditingId("");
+  };
+
+  const clearReferenceForm = () => {
+    setReferenceEditingId("");
+    setReferencePersonName("");
+    setReferenceTitle("");
+    setReferenceRelationship("profile-reference");
+    setReferenceNotes("");
+    setReferenceTags("");
+    setReferenceImageDataUrl("");
+    setReferenceFileName("");
+    setReferenceCaption("");
+  };
+
+  const loadReferenceFile = async (file?: File) => {
+    if (!file) return;
+    try {
+      setReferenceStatus("Preparing reference image preview...");
+      const dataUrl = await imageFileToReferenceDataUrl(file);
+      setReferenceImageDataUrl(dataUrl);
+      setReferenceFileName(file.name || "reference-image.jpg");
+      setReferenceStatus("Reference image ready. Save to caption and index it.");
+    } catch (error) {
+      setReferenceStatus(error instanceof Error ? error.message : "Could not prepare reference image.");
+    }
+  };
+
+  const saveReference = async () => {
+    if (!referencePersonName.trim()) {
+      setReferenceStatus("Person/profile name is required.");
+      return;
+    }
+    if (!referenceImageDataUrl) {
+      setReferenceStatus("Add a reference image first.");
+      return;
+    }
+    const existing = referenceEntries.find((entry) => entry.id === referenceEditingId);
+    const now = Date.now();
+    const entry: Partial<ReferenceImageEntry> = {
+      id: existing?.id,
+      personName: referencePersonName.trim(),
+      title: referenceTitle.trim() || `${referencePersonName.trim()} reference photo`,
+      relationship: referenceRelationship.trim() || "profile-reference",
+      fileName: referenceFileName || existing?.fileName || "reference-image.jpg",
+      imageMimeType: "image/jpeg",
+      imageDataUrl: referenceImageDataUrl,
+      caption: referenceCaption.trim(),
+      notes: referenceNotes.trim(),
+      tags: referenceTags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      memoryId: existing?.memoryId,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    };
+
+    try {
+      setReferenceSaving(true);
+      setReferenceStatus("Captioning reference image locally and embedding it into Qdrant...");
+      const response = await fetch("/api/memory/references", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "upsert", entry, analyze: !referenceCaption.trim() }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        entries?: ReferenceImageEntry[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || `Reference save returned ${response.status}.`);
+      setReferenceEntries(Array.isArray(data.entries) ? data.entries : referenceEntries);
+      clearReferenceForm();
+      setReferenceStatus("Saved visual reference and linked durable memory.");
+      void loadServerMemories();
+    } catch (error) {
+      setReferenceStatus(error instanceof Error ? error.message : "Could not save reference image.");
+    } finally {
+      setReferenceSaving(false);
+    }
+  };
+
+  const editReference = (entry: ReferenceImageEntry) => {
+    setReferenceEditingId(entry.id);
+    setReferencePersonName(entry.personName);
+    setReferenceTitle(entry.title);
+    setReferenceRelationship(entry.relationship);
+    setReferenceNotes(entry.notes);
+    setReferenceTags(entry.tags.join(", "));
+    setReferenceImageDataUrl(entry.imageDataUrl);
+    setReferenceFileName(entry.fileName);
+    setReferenceCaption(entry.caption);
+    setActiveView("references");
+  };
+
+  const deleteReference = async (id: string) => {
+    try {
+      setReferenceStatus("Deleting reference image and linked memory...");
+      const response = await fetch("/api/memory/references", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        entries?: ReferenceImageEntry[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || `Reference delete returned ${response.status}.`);
+      setReferenceEntries(Array.isArray(data.entries) ? data.entries : referenceEntries.filter((entry) => entry.id !== id));
+      setReferenceStatus("Deleted reference image and vector memory.");
+      void loadServerMemories();
+    } catch (error) {
+      setReferenceStatus(error instanceof Error ? error.message : "Could not delete reference image.");
+    }
   };
 
   const saveMemory = async () => {
@@ -389,11 +579,12 @@ export default function MemoryBankPage() {
       <div className="flex flex-wrap gap-2">
         {[
           ["memories", "Memory Bank"],
+          ["references", "Reference Gallery"],
           ["aliases", "Alias Rules"],
         ].map(([id, label]) => (
           <button
             key={id}
-            onClick={() => setActiveView(id as "memories" | "aliases")}
+            onClick={() => setActiveView(id as "memories" | "references" | "aliases")}
             className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
               activeView === id
                 ? "border-uvb-neon-green/30 bg-uvb-deep-teal/25 text-uvb-neon-green"
@@ -404,6 +595,172 @@ export default function MemoryBankPage() {
           </button>
         ))}
       </div>
+
+      {activeView === "references" && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+          <div className="uvb-card">
+            <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+                  <Camera className="h-4 w-4 text-uvb-neon-green" />
+                  {referenceEditingId ? "Edit Visual Reference" : "Add Visual Reference"}
+                </h3>
+                <p className="mt-1 text-xs text-uvb-text-muted">
+                  Save user-approved reference photos with local captions, Qdrant retrieval, and editable notes.
+                </p>
+              </div>
+              <button onClick={() => void loadReferenceGallery()} className="btn-ghost text-sm">
+                Refresh
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[280px_1fr]">
+              <div className="space-y-3">
+                <div className="flex aspect-[4/5] items-center justify-center overflow-hidden rounded-lg border border-uvb-border/40 bg-uvb-dark-gray/40">
+                  {referenceImageDataUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={referenceImageDataUrl}
+                      alt="Reference preview"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 text-xs text-uvb-text-muted">
+                      <PhotoIcon className="h-8 w-8" />
+                      Reference image
+                    </div>
+                  )}
+                </div>
+                <label className="btn-ghost flex cursor-pointer items-center justify-center gap-2 text-sm">
+                  <ImageIcon className="h-4 w-4" />
+                  Choose Photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => void loadReferenceFile(event.target.files?.[0])}
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <input
+                    value={referencePersonName}
+                    onChange={(event) => setReferencePersonName(event.target.value)}
+                    className="input-field"
+                    placeholder="Person/profile, e.g. Richard / TacImpulse"
+                  />
+                  <input
+                    value={referenceTitle}
+                    onChange={(event) => setReferenceTitle(event.target.value)}
+                    className="input-field"
+                    placeholder="Title, e.g. Richard cap and beard reference"
+                  />
+                  <input
+                    value={referenceRelationship}
+                    onChange={(event) => setReferenceRelationship(event.target.value)}
+                    className="input-field"
+                    placeholder="Relationship, e.g. owner, friend, profile-reference"
+                  />
+                  <input
+                    value={referenceTags}
+                    onChange={(event) => setReferenceTags(event.target.value)}
+                    className="input-field"
+                    placeholder="Tags, comma separated"
+                  />
+                </div>
+                <textarea
+                  value={referenceNotes}
+                  onChange={(event) => setReferenceNotes(event.target.value)}
+                  className="input-field min-h-20 resize-y"
+                  placeholder="Your trusted notes about this reference image."
+                />
+                <textarea
+                  value={referenceCaption}
+                  onChange={(event) => setReferenceCaption(event.target.value)}
+                  className="input-field min-h-28 resize-y"
+                  placeholder="Optional: leave blank and Sophia will caption it locally before indexing."
+                />
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={saveReference}
+                    disabled={referenceSaving}
+                    className="btn-primary inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {referenceSaving ? "Saving..." : referenceEditingId ? "Update Reference" : "Caption & Save"}
+                  </button>
+                  {referenceEditingId && (
+                    <button onClick={clearReferenceForm} className="btn-ghost">
+                      Cancel
+                    </button>
+                  )}
+                  <span className="text-xs text-uvb-text-muted">{referenceStatus}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {referenceEntries.map((entry) => (
+              <div key={entry.id} className="uvb-card">
+                <div className="flex gap-4">
+                  <div className="h-32 w-24 flex-shrink-0 overflow-hidden rounded-lg border border-uvb-border/40 bg-uvb-dark-gray/40">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={entry.imageDataUrl} alt={entry.title} className="h-full w-full object-cover" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <h4 className="text-sm font-semibold text-uvb-text-primary">{entry.personName}</h4>
+                        <p className="text-xs text-uvb-text-muted">{entry.title}</p>
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => editReference(entry)}
+                          className="p-1.5 rounded-lg text-uvb-text-muted hover:bg-uvb-light-gray/30 hover:text-uvb-steel-blue"
+                          title="Edit reference"
+                          aria-label="Edit reference"
+                        >
+                          <PencilSquareIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => void deleteReference(entry.id)}
+                          className="p-1.5 rounded-lg text-uvb-text-muted hover:bg-uvb-light-gray/30 hover:text-red-400"
+                          title="Delete reference"
+                          aria-label="Delete reference"
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-uvb-text-secondary">
+                      {entry.caption || entry.notes || "No caption yet."}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-uvb-text-muted">
+                      <span className="rounded-full bg-uvb-dark-gray/60 px-2 py-1">{entry.relationship}</span>
+                      <span className="rounded-full bg-uvb-dark-gray/60 px-2 py-1">
+                        {entry.analysisModel || "manual caption"}
+                      </span>
+                      {entry.tags.map((tag) => (
+                        <span key={tag} className="rounded-full bg-uvb-dark-gray/60 px-2 py-1">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!referenceEntries.length && (
+              <div className="uvb-card py-10 text-center text-sm text-uvb-text-muted">
+                No visual references yet. Add Richard, Jusstin, Sophia style sheets, or other approved anchors here.
+              </div>
+            )}
+          </div>
+        </motion.div>
+      )}
 
       {activeView === "aliases" && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
