@@ -11,8 +11,10 @@ import {
   type CreateAgentJobPayload,
   normalizeAgentJobKind,
 } from "@/lib/agentJobs";
+import { runAgentJob } from "@/lib/agentRunner";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 const STORE_PATH = path.join(process.cwd(), ".uvb", "agent-jobs.json");
 const MAX_JOBS = 200;
@@ -225,6 +227,31 @@ export async function POST(request: NextRequest) {
     job.status = "cancelled";
     job.updatedAt = Date.now();
     job.audit.unshift(audit("cancelled", safeText(payload.note, "Cancelled by user."), "user"));
+  } else if (action === "run") {
+    if (job.status !== "approved" && job.status !== "running") {
+      return NextResponse.json({ error: "job must be approved before running." }, { status: 409 });
+    }
+
+    job.status = "running";
+    job.updatedAt = Date.now();
+    job.audit.unshift(audit("running", "Supervised local runner started.", "system"));
+    await writeStore(store);
+
+    try {
+      const output = await runAgentJob(job);
+      job.status = "completed";
+      job.result = output.result;
+      job.error = "";
+      job.artifacts = [...output.artifacts, ...job.artifacts].slice(0, 20);
+      job.updatedAt = Date.now();
+      job.audit.unshift(audit("completed", output.result, "system"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent runner failed.";
+      job.status = "failed";
+      job.error = message;
+      job.updatedAt = Date.now();
+      job.audit.unshift(audit("failed", message, "system"));
+    }
   } else if (action === "complete") {
     job.status = "completed";
     job.result = safeText(payload.result, "Completed.");

@@ -105,18 +105,18 @@ const MODEL_PRESETS = [
 const AGENT_CAPABILITY_READINESS = [
   {
     title: "Web Research",
-    status: "partial",
-    detail: "Permissions, domains, and network scope are saved. Sophia can queue research work, but execution still needs the supervised browser runner.",
+    status: "configured",
+    detail: "Approved URL research jobs now run through the supervised local runner and capture status, final URL, page title, description, and headings.",
   },
   {
     title: "Browser Use",
-    status: "staged",
-    detail: "Browser-use permission and job packets are modeled. Playwright/browser execution with screenshots and approvals is the next wiring step.",
+    status: "partial",
+    detail: "Approved browser jobs can inspect allowed URLs now. Full Playwright interaction, screenshots, and form workflows are the next guarded expansion.",
   },
   {
     title: "Local Coding",
     status: "partial",
-    detail: "Workspace, file, terminal, git, and provider preferences are saved. Sophia can queue coding work, but patch execution needs the local coder adapter.",
+    detail: "Approved coding jobs now run a read-only workspace preflight with git status, diff stat, and package scripts. Patch execution stays gated.",
   },
   {
     title: "Kilo Code Gateway",
@@ -418,9 +418,17 @@ export default function SettingsPage() {
     }
   };
 
-  const updateAgentJobAction = async (id: string, action: "approve" | "cancel" | "delete") => {
+  const updateAgentJobAction = async (id: string, action: "approve" | "cancel" | "delete" | "run") => {
     setAgentJobStatus(
-      `${action === "approve" ? "Approving" : action === "delete" ? "Deleting" : "Cancelling"} agent job...`
+      `${
+        action === "approve"
+          ? "Approving"
+          : action === "delete"
+            ? "Deleting"
+            : action === "run"
+              ? "Running"
+              : "Cancelling"
+      } agent job...`
     );
     try {
       const response = await fetch("/api/agent/jobs", {
@@ -437,7 +445,13 @@ export default function SettingsPage() {
         setAgentJobStatus("Job deleted.");
       } else {
         setAgentJobs((current) => current.map((job) => (job.id === data.job?.id ? data.job : job)));
-        setAgentJobStatus(`Job ${action === "approve" ? "approved" : "cancelled"}.`);
+        setAgentJobStatus(
+          action === "approve"
+            ? "Job approved."
+            : action === "run"
+              ? `Job ${data.job?.status ?? "updated"}.`
+              : "Job cancelled."
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not update agent job.";
@@ -1851,15 +1865,44 @@ export default function SettingsPage() {
                             </div>
                           )}
                           {job.status !== "pending-approval" && (
-                            <button onClick={() => updateAgentJobAction(job.id, "delete")} className="btn-ghost shrink-0 text-xs">
-                              Delete
-                            </button>
+                            <div className="flex shrink-0 gap-2">
+                              {job.status === "approved" && (
+                                <button onClick={() => updateAgentJobAction(job.id, "run")} className="btn-primary text-xs">
+                                  Run
+                                </button>
+                              )}
+                              {job.status === "running" && (
+                                <span className="rounded-full border border-uvb-accent-yellow/30 px-2 py-1 text-[10px] uppercase tracking-wider text-uvb-accent-yellow">
+                                  Running
+                                </span>
+                              )}
+                              {job.status !== "running" && (
+                                <button onClick={() => updateAgentJobAction(job.id, "delete")} className="btn-ghost text-xs">
+                                  Delete
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
+                        {(job.result || job.error) && (
+                          <div
+                            className={`mb-3 rounded-md border p-2 text-xs leading-relaxed ${
+                              job.error
+                                ? "border-red-500/30 bg-red-500/10 text-red-200"
+                                : "border-uvb-neon-green/30 bg-uvb-deep-teal/20 text-uvb-text-secondary"
+                            }`}
+                          >
+                            {job.error || job.result}
+                          </div>
+                        )}
                         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                          {job.executionPlan.slice(0, 4).map((step, index) => (
-                            <p key={`${job.id}:${index}`} className="rounded-md border border-uvb-border/20 bg-black/10 p-2 text-[11px] text-uvb-text-muted">
-                              {index + 1}. {step}
+                          {(job.artifacts.length ? job.artifacts.slice(0, 4) : job.executionPlan.slice(0, 4).map((step, index) => ({
+                            label: `Plan ${index + 1}`,
+                            value: step,
+                          }))).map((artifact, index) => (
+                            <p key={`${job.id}:${artifact.label}:${index}`} className="rounded-md border border-uvb-border/20 bg-black/10 p-2 text-[11px] text-uvb-text-muted">
+                              <span className="mb-1 block text-uvb-text-secondary">{artifact.label}</span>
+                              {artifact.value}
                             </p>
                           ))}
                         </div>
@@ -2123,13 +2166,13 @@ export default function SettingsPage() {
                         priority: "P0",
                         title: "Browser-Use Runtime",
                         detail:
-                          "Wire a Playwright/browser-use style runner for page navigation, screenshots, forms, and logged-in web workflows inside the configured domain scope.",
+                          "URL inspection is live now. Next step is Playwright navigation, screenshots, forms, and logged-in web workflows inside the configured domain scope.",
                       },
                       {
                         priority: "P1",
                         title: "Coding Agent Adapter",
                         detail:
-                          "Add an adapter that can route coding jobs to Local UVB, Kilo Gateway, Kilo CLI/ACP, or OpenHands-style sandbox execution.",
+                          "Read-only coding preflight is live now. Next step is patch execution through Local UVB, Kilo Gateway, Kilo CLI/ACP, or OpenHands-style sandbox execution.",
                       },
                       {
                         priority: "P1",
@@ -2144,10 +2187,10 @@ export default function SettingsPage() {
                           "Add Windows UI Automation or a supervised desktop bridge after browser tools are stable, because OS-level control has higher risk.",
                       },
                       {
-                        priority: "P2",
+                        priority: "P0",
                         title: "Memory Retrieval Into Chat",
                         detail:
-                          "Promote the Memory Bank from searchable storage into opt-in context retrieval with citations to the source thread or pinned memory.",
+                          "Active: Memory Bank entries are embedded, searched through Qdrant, reranked, injected into chat, and returned with memory metadata.",
                       },
                       {
                         priority: "P3",
