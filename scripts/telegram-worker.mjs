@@ -36,7 +36,7 @@ const telegramSttModel = (process.env.TELEGRAM_STT_MODEL ?? process.env.UVB_STT_
 const telegramSttLanguage = (process.env.TELEGRAM_STT_LANGUAGE ?? process.env.UVB_STT_LANGUAGE ?? "en").trim();
 const telegramSttResponseFormat = (process.env.TELEGRAM_STT_RESPONSE_FORMAT ?? process.env.UVB_STT_RESPONSE_FORMAT ?? "json").trim();
 const telegramSttTemperature = (process.env.TELEGRAM_STT_TEMPERATURE ?? process.env.UVB_STT_TEMPERATURE ?? "0").trim();
-const telegramSttVadFilter = (process.env.TELEGRAM_STT_VAD_FILTER ?? process.env.UVB_STT_VAD_FILTER ?? "true").trim();
+const telegramSttVadFilter = (process.env.TELEGRAM_STT_VAD_FILTER ?? process.env.UVB_STT_VAD_FILTER ?? "false").trim();
 const telegramSttConditionOnPreviousText = (
   process.env.TELEGRAM_STT_CONDITION_ON_PREVIOUS_TEXT ??
   process.env.UVB_STT_CONDITION_ON_PREVIOUS_TEXT ??

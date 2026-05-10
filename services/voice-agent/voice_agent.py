@@ -43,7 +43,7 @@ DEFAULT_VOICE_SETTINGS = {
     ),
     "sttResponseFormat": os.getenv("UVB_STT_RESPONSE_FORMAT", "json"),
     "sttTemperature": os.getenv("UVB_STT_TEMPERATURE", "0"),
-    "sttVadFilter": os.getenv("UVB_STT_VAD_FILTER", "true"),
+    "sttVadFilter": os.getenv("UVB_STT_VAD_FILTER", "false"),
     "sttConditionOnPreviousText": os.getenv(
         "UVB_STT_CONDITION_ON_PREVIOUS_TEXT", "false"
     ),

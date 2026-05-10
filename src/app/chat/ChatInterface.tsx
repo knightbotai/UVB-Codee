@@ -1513,7 +1513,7 @@ export default function ChatInterface() {
     formData.append("prompt", voiceSettings.sttPrompt);
     formData.append("response_format", "json");
     formData.append("temperature", "0");
-    formData.append("vad_filter", "true");
+    formData.append("vad_filter", "false");
     formData.append("condition_on_previous_text", "false");
     formData.append("no_speech_threshold", "0.72");
     formData.append("compression_ratio_threshold", "2.2");

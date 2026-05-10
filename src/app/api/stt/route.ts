@@ -10,13 +10,7 @@ const DEFAULT_STT_LANGUAGE = process.env.UVB_STT_LANGUAGE ?? "en";
 const DEFAULT_STT_RESPONSE_FORMAT = process.env.UVB_STT_RESPONSE_FORMAT ?? "json";
 const DEFAULT_STT_TEMPERATURE = process.env.UVB_STT_TEMPERATURE ?? "0";
 const DEFAULT_STT_TIMEOUT_MS = Number.parseInt(process.env.UVB_STT_TIMEOUT_MS ?? "120000", 10);
-const DEFAULT_STT_VAD_FILTER = process.env.UVB_STT_VAD_FILTER ?? "true";
-const DEFAULT_STT_CONDITION_ON_PREVIOUS_TEXT =
-  process.env.UVB_STT_CONDITION_ON_PREVIOUS_TEXT ?? "false";
-const DEFAULT_STT_NO_SPEECH_THRESHOLD = process.env.UVB_STT_NO_SPEECH_THRESHOLD ?? "0.72";
-const DEFAULT_STT_COMPRESSION_RATIO_THRESHOLD =
-  process.env.UVB_STT_COMPRESSION_RATIO_THRESHOLD ?? "2.2";
-const DEFAULT_STT_LOG_PROB_THRESHOLD = process.env.UVB_STT_LOG_PROB_THRESHOLD ?? "-0.8";
+const DEFAULT_STT_VAD_FILTER = process.env.UVB_STT_VAD_FILTER ?? "false";
 const DEFAULT_STT_PROMPT =
   process.env.UVB_STT_PROMPT ??
   "Punctuated English transcript. Vocabulary: Sophia, Richard, Jusstin, Codee, Butt Stuff.";
@@ -62,6 +56,10 @@ function hasLoopArtifact(text: string) {
     /\b([\p{L}\p{N}'-]+(?:\s+[\p{L}\p{N}'-]+){1,4})\b(?:[\s,.;:!?-]+\1\b){1,}/iu;
   const repeatedThanks = /\b(thank you|thanks)\b(?:[\s,.;:!?-]+\1\b){1,}/iu;
   return repeatedWordRun.test(text) || repeatedPhraseRun.test(text) || repeatedThanks.test(text);
+}
+
+function isTruthyFormValue(value: FormDataEntryValue | null, fallback: string) {
+  return String(value ?? fallback).trim().toLowerCase() === "true";
 }
 
 function extractText(rawText: string) {
@@ -123,41 +121,9 @@ export async function POST(request: NextRequest) {
         ? DEFAULT_STT_PROMPT
         : aliasPrompt(String(incoming.get("prompt") || DEFAULT_STT_PROMPT), aliasRules)
     );
-    appendOptional(
-      payload,
-      "response_format",
-      incoming.get("response_format") || DEFAULT_STT_RESPONSE_FORMAT
-    );
+    appendOptional(payload, "response_format", incoming.get("response_format") || DEFAULT_STT_RESPONSE_FORMAT);
     appendOptional(payload, "temperature", incoming.get("temperature") || DEFAULT_STT_TEMPERATURE);
-    appendOptional(
-      payload,
-      "vad_filter",
-      safeRetry ? "false" : incoming.get("vad_filter") || DEFAULT_STT_VAD_FILTER
-    );
-    appendOptional(
-      payload,
-      "condition_on_previous_text",
-      safeRetry
-        ? "false"
-        : incoming.get("condition_on_previous_text") || DEFAULT_STT_CONDITION_ON_PREVIOUS_TEXT
-    );
-    appendOptional(
-      payload,
-      "no_speech_threshold",
-      safeRetry ? "0.6" : incoming.get("no_speech_threshold") || DEFAULT_STT_NO_SPEECH_THRESHOLD
-    );
-    appendOptional(
-      payload,
-      "compression_ratio_threshold",
-      safeRetry
-        ? "1.8"
-        : incoming.get("compression_ratio_threshold") || DEFAULT_STT_COMPRESSION_RATIO_THRESHOLD
-    );
-    appendOptional(
-      payload,
-      "log_prob_threshold",
-      safeRetry ? "-0.8" : incoming.get("log_prob_threshold") || DEFAULT_STT_LOG_PROB_THRESHOLD
-    );
+    appendOptional(payload, "vad_filter", safeRetry ? "true" : "false");
     appendOptional(
       payload,
       "hotwords",
@@ -173,7 +139,7 @@ export async function POST(request: NextRequest) {
   try {
     const response = await fetchWithTimeout(endpoint, {
       method: "POST",
-      body: buildPayload(),
+      body: buildPayload(false),
     }, timeoutMs);
     const rawText = await response.text();
 
@@ -198,6 +164,25 @@ export async function POST(request: NextRequest) {
       if (retryResponse.ok) {
         const retryText = extractText(retryRawText);
         if (retryText.trim() && retryText.length <= text.length * 1.5) {
+          text = retryText;
+        }
+      }
+    } else if (
+      isTruthyFormValue(incoming.get("vad_filter"), DEFAULT_STT_VAD_FILTER) &&
+      text.trim().length < 20
+    ) {
+      const retryResponse = await fetchWithTimeout(
+        endpoint,
+        {
+          method: "POST",
+          body: buildPayload(true),
+        },
+        timeoutMs
+      );
+      const retryRawText = await retryResponse.text();
+      if (retryResponse.ok) {
+        const retryText = extractText(retryRawText);
+        if (retryText.trim().length > text.trim().length) {
           text = retryText;
         }
       }
