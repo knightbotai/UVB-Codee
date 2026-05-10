@@ -130,8 +130,8 @@ const AGENT_CAPABILITY_READINESS = [
   },
   {
     title: "Memory Retrieval",
-    status: "partial",
-    detail: "Local memories and Telegram/imported chat logs are searchable and editable. Automatic RAG injection into prompts is still staged.",
+    status: "configured",
+    detail: "Server memories are embedded, stored in Qdrant, reranked, and injected into Sophia's chat context from the local memory bridge.",
   },
 ];
 
@@ -2995,7 +2995,7 @@ export default function SettingsPage() {
                           Memory Retrieval
                         </p>
                         <p className="text-xs text-uvb-text-muted">
-                          Staged until embeddings and chat injection are wired
+                          Active: local embeddings, Qdrant retrieval, reranking, and chat injection
                         </p>
                       </div>
                       <button
@@ -3005,7 +3005,7 @@ export default function SettingsPage() {
                         className={`w-11 h-6 rounded-full relative ${
                           uiSettings.ragRetrievalEnabled ? "bg-uvb-accent-yellow/30" : "bg-uvb-light-gray"
                         }`}
-                        title="Preference saved locally; retrieval pipeline is staged."
+                        title="Enable or soften automatic Memory Bank retrieval in chat prompts."
                       >
                         <span
                           className={`absolute top-0.5 w-5 h-5 rounded-full shadow transition-all ${

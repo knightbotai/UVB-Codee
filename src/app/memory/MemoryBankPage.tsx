@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowDownTrayIcon,
@@ -22,6 +22,7 @@ import {
 } from "@/lib/nameAliases";
 
 type MemoryType = "conversation" | "knowledge" | "context" | "preference";
+type MemorySource = "chat" | "manual" | "telegram" | "system";
 
 interface MemoryEntry {
   id: string;
@@ -31,7 +32,21 @@ interface MemoryEntry {
   timestamp: number;
   tags: string[];
   sizeBytes: number;
-  source: "chat" | "manual";
+  source: MemorySource;
+  updatedAt: number;
+  score?: number;
+  matchedBy?: "qdrant" | "lexical" | "recent";
+}
+
+interface MemoryBackendStatus {
+  qdrantOnline: boolean;
+  embeddingOnline: boolean;
+  rerankerOnline: boolean;
+  collection: string;
+  pointCount: number;
+  vectorSize: number;
+  storeCount: number;
+  lastError?: string;
 }
 
 const LOCAL_MEMORY_KEY = "uvb:manual-memory-bank";
@@ -90,6 +105,7 @@ function threadToMemory(thread: ChatThread): MemoryEntry {
     tags,
     sizeBytes: byteSize(content),
     source: "chat",
+    updatedAt: thread.updatedAt || thread.createdAt || Date.now(),
   };
 }
 
@@ -113,6 +129,7 @@ function loadManualMemories(): MemoryEntry[] {
             tags: Array.isArray(entry.tags) ? entry.tags.map(safeText).filter(Boolean) : [],
             sizeBytes: typeof entry.sizeBytes === "number" ? entry.sizeBytes : byteSize(safeText(entry.content)),
             source: "manual" as const,
+            updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : Date.now(),
           }))
           .filter((entry) => entry.content)
       : [];
@@ -128,7 +145,9 @@ function saveManualMemories(entries: MemoryEntry[]) {
 export default function MemoryBankPage() {
   const threads = useAppStore((state) => state.threads);
   const [activeView, setActiveView] = useState<"memories" | "aliases">("memories");
-  const [manualEntries, setManualEntries] = useState<MemoryEntry[]>(loadManualMemories);
+  const [serverEntries, setServerEntries] = useState<MemoryEntry[]>([]);
+  const [memoryBackend, setMemoryBackend] = useState<MemoryBackendStatus | null>(null);
+  const [memoryStatus, setMemoryStatus] = useState("Loading server Memory Bank...");
   const [aliasRules, setAliasRules] = useState<AliasRule[]>(loadAliasRules);
   const [aliasStatus, setAliasStatus] = useState("");
   const [aliasLabel, setAliasLabel] = useState("");
@@ -143,12 +162,61 @@ export default function MemoryBankPage() {
   const [newTags, setNewTags] = useState("");
   const [editingId, setEditingId] = useState("");
 
+  const loadServerMemories = async (importLegacy = false) => {
+    try {
+      setMemoryStatus("Loading server Memory Bank...");
+      const response = await fetch("/api/memory", { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as {
+        entries?: MemoryEntry[];
+        status?: MemoryBackendStatus;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || `Memory API returned ${response.status}.`);
+
+      let entries = Array.isArray(data.entries) ? data.entries : [];
+      if (importLegacy) {
+        const legacyEntries = loadManualMemories().filter(
+          (entry) => !entries.some((serverEntry) => serverEntry.id === entry.id)
+        );
+        if (legacyEntries.length) {
+          const syncResponse = await fetch("/api/memory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "sync", entries: legacyEntries }),
+          });
+          const syncData = (await syncResponse.json().catch(() => ({}))) as {
+            entries?: MemoryEntry[];
+            status?: MemoryBackendStatus;
+            error?: string;
+          };
+          if (syncResponse.ok) {
+            entries = Array.isArray(syncData.entries) ? syncData.entries : entries;
+            setMemoryBackend(syncData.status ?? data.status ?? null);
+          }
+        } else {
+          setMemoryBackend(data.status ?? null);
+        }
+      } else {
+        setMemoryBackend(data.status ?? null);
+      }
+
+      setServerEntries(entries);
+      setMemoryStatus(`Loaded ${entries.length} durable server memor${entries.length === 1 ? "y" : "ies"}.`);
+    } catch (error) {
+      setMemoryStatus(error instanceof Error ? error.message : "Could not load Memory Bank.");
+    }
+  };
+
+  useEffect(() => {
+    void loadServerMemories(true);
+  }, []);
+
   const entries = useMemo(
     () =>
-      [...manualEntries, ...threads.map(threadToMemory)].sort(
-        (a, b) => b.timestamp - a.timestamp
+      [...serverEntries, ...threads.map(threadToMemory)].sort(
+        (a, b) => b.updatedAt - a.updatedAt
       ),
-    [manualEntries, threads]
+    [serverEntries, threads]
   );
 
   const filteredEntries = entries.filter((entry) => {
@@ -164,7 +232,7 @@ export default function MemoryBankPage() {
 
   const stats = [
     { label: "Entries", value: entries.length, icon: Database },
-    { label: "Manual", value: manualEntries.length, icon: Brain },
+    { label: "Indexed", value: memoryBackend?.pointCount ?? 0, icon: Brain },
     { label: "Chat Threads", value: threads.length, icon: Search },
     {
       label: "Storage",
@@ -225,7 +293,7 @@ export default function MemoryBankPage() {
     setEditingId("");
   };
 
-  const saveMemory = () => {
+  const saveMemory = async () => {
     const content = newContent.trim();
     if (!content) return;
 
@@ -233,36 +301,42 @@ export default function MemoryBankPage() {
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean);
-    const nextEntries = editingId
-      ? manualEntries.map((entry) =>
-          entry.id === editingId
-            ? {
-                ...entry,
-                title: newTitle.trim() || content.slice(0, 64) || "Untitled memory",
-                type: newType,
-                content,
-                timestamp: Date.now(),
-                tags,
-                sizeBytes: byteSize(content),
-              }
-            : entry
-        )
-      : [
-          {
-            id: `manual:${generateId()}`,
-            title: newTitle.trim() || content.slice(0, 64) || "Untitled memory",
-            type: newType,
-            content,
-            timestamp: Date.now(),
-            tags,
-            sizeBytes: byteSize(content),
-            source: "manual" as const,
-          },
-          ...manualEntries,
-        ];
-    setManualEntries(nextEntries);
-    saveManualMemories(nextEntries);
-    clearMemoryForm();
+    const existing = serverEntries.find((entry) => entry.id === editingId);
+    const now = Date.now();
+    const entry: MemoryEntry = {
+      id: existing?.id || `manual:${generateId()}`,
+      title: newTitle.trim() || content.slice(0, 64) || "Untitled memory",
+      type: newType,
+      content,
+      timestamp: existing?.timestamp || now,
+      tags,
+      sizeBytes: byteSize(content),
+      source: "manual",
+      updatedAt: now,
+    };
+
+    try {
+      setMemoryStatus("Saving durable memory and embedding it into Qdrant...");
+      const response = await fetch("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "upsert", entry }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        entries?: MemoryEntry[];
+        status?: MemoryBackendStatus;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || `Memory save returned ${response.status}.`);
+      const nextEntries = Array.isArray(data.entries) ? data.entries : [entry, ...serverEntries];
+      setServerEntries(nextEntries);
+      setMemoryBackend(data.status ?? memoryBackend);
+      saveManualMemories(nextEntries.filter((item) => item.source === "manual"));
+      clearMemoryForm();
+      setMemoryStatus(`Saved "${entry.title}" to disk and vector memory.`);
+    } catch (error) {
+      setMemoryStatus(error instanceof Error ? error.message : "Could not save memory.");
+    }
   };
 
   const editMemory = (entry: MemoryEntry) => {
@@ -274,10 +348,28 @@ export default function MemoryBankPage() {
     setNewTags(entry.tags.join(", "));
   };
 
-  const deleteMemory = (id: string) => {
-    const nextEntries = manualEntries.filter((entry) => entry.id !== id);
-    setManualEntries(nextEntries);
-    saveManualMemories(nextEntries);
+  const deleteMemory = async (id: string) => {
+    try {
+      setMemoryStatus("Deleting memory from disk and Qdrant...");
+      const response = await fetch("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        entries?: MemoryEntry[];
+        status?: MemoryBackendStatus;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || `Memory delete returned ${response.status}.`);
+      const nextEntries = Array.isArray(data.entries) ? data.entries : serverEntries.filter((entry) => entry.id !== id);
+      setServerEntries(nextEntries);
+      setMemoryBackend(data.status ?? memoryBackend);
+      saveManualMemories(nextEntries.filter((item) => item.source === "manual"));
+      setMemoryStatus("Deleted memory from server store and vector index.");
+    } catch (error) {
+      setMemoryStatus(error instanceof Error ? error.message : "Could not delete memory.");
+    }
   };
 
   const exportMemories = () => {
@@ -624,13 +716,36 @@ export default function MemoryBankPage() {
       <div className="uvb-card">
         <div className="mb-3 flex items-center gap-3">
           <Brain className="w-5 h-5 text-uvb-royal-purple-light" />
-          <h4 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
-            Local Memory Status
-          </h4>
+          <div className="min-w-0 flex-1">
+            <h4 className="text-sm font-semibold text-uvb-text-primary font-[family-name:var(--font-display)]">
+              Durable RAG Memory Status
+            </h4>
+            <p className="mt-1 text-xs text-uvb-text-muted">{memoryStatus}</p>
+          </div>
+          <button onClick={() => void loadServerMemories()} className="btn-ghost text-xs">
+            Refresh
+          </button>
         </div>
+        {memoryBackend && (
+          <div className="mb-3 grid grid-cols-1 gap-2 text-[11px] text-uvb-text-muted md:grid-cols-4">
+            <span className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 px-3 py-2">
+              Qdrant: {memoryBackend.qdrantOnline ? "online" : "offline"}
+            </span>
+            <span className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 px-3 py-2">
+              Embeddings: {memoryBackend.embeddingOnline ? `${memoryBackend.vectorSize}d` : "offline"}
+            </span>
+            <span className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 px-3 py-2">
+              Reranker: {memoryBackend.rerankerOnline ? "online" : "offline"}
+            </span>
+            <span className="rounded-lg border border-uvb-border/30 bg-uvb-dark-gray/40 px-3 py-2">
+              Collection: {memoryBackend.collection}
+            </span>
+          </div>
+        )}
         <p className="text-xs leading-relaxed text-uvb-text-secondary">
-          This page now reflects actual local UVB data: saved chat threads plus pinned memories stored in browser localStorage.
-          Manual memories can be created, edited, deleted, searched, exported, and injected into local chat context with recent conversation recall. Semantic embeddings remain staged for the deeper vector-memory pass.
+          Manual memories are saved to UVB&apos;s server-side memory store, embedded through the local BGE-M3 endpoint,
+          indexed into Qdrant, reranked on retrieval, and injected into Sophia&apos;s chat context through the server chat bridge.
+          Local browser chat threads remain visible here as convenience context while new turns are auto-captured into durable memory.
         </p>
       </div>
         </>

@@ -1096,7 +1096,7 @@ async function askKnightBot(chatId, content, logText) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({ messages, memorySource: "telegram" }),
       },
       telegramUvbChatTimeoutMs,
       "UVB chat"

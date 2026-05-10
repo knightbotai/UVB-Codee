@@ -7,6 +7,12 @@ import {
   type AliasRule,
 } from "@/lib/nameAliases";
 import { appendCurrentUserSystemNote } from "@/lib/currentUserContext";
+import {
+  appendRetrievedMemorySystemNote,
+  searchMemoryEntries,
+  upsertConversationMemory,
+  type MemorySource,
+} from "@/lib/serverMemory";
 
 const LLM_BASE_URL = process.env.UVB_LLM_BASE_URL ?? "http://127.0.0.1:8003/v1";
 const LLM_MODEL = process.env.UVB_LLM_MODEL ?? "qwen36-35b-a3b-heretic-nvfp4";
@@ -39,6 +45,7 @@ interface ChatRequestBody {
     maxTokens?: number;
     enableThinking?: boolean;
   };
+  memorySource?: MemorySource;
 }
 
 interface OpenAIChatResponse {
@@ -179,6 +186,23 @@ function compactContentForModel(
   );
 }
 
+function textFromContent(content: ChatMessage["content"]) {
+  if (typeof content === "string") return content;
+  return content
+    .filter((part) => part.type === "text")
+    .map((part) => ("text" in part ? part.text : ""))
+    .join("\n");
+}
+
+function latestUserText(messages: ChatMessage[]) {
+  const latest = [...messages].reverse().find((message) => message.role === "user");
+  return latest ? textFromContent(latest.content).trim() : "";
+}
+
+function normalizeMemorySource(value: unknown): MemorySource {
+  return value === "telegram" || value === "system" || value === "manual" ? value : "chat";
+}
+
 export async function POST(request: NextRequest) {
   let body: ChatRequestBody;
 
@@ -192,11 +216,18 @@ export async function POST(request: NextRequest) {
   const runtime = await loadRuntimeSettings();
   const settings = body.settings ?? runtime.modelSettings;
   const aliasRules = normalizeAliasRules(body.aliasRules);
+  const memoryQuery = latestUserText(userMessages);
+  const retrievedMemories = memoryQuery
+    ? await searchMemoryEntries(applyNameAliases(memoryQuery, aliasRules), 8).catch(() => [])
+    : [];
   const systemPrompt = appendNameAliasSystemNote(
-    appendCurrentUserSystemNote(
-      body.systemPrompt?.trim() ||
-        runtime.voiceSettings.systemPrompt?.trim() ||
-        DEFAULT_SYSTEM_PROMPT
+    appendRetrievedMemorySystemNote(
+      appendCurrentUserSystemNote(
+        body.systemPrompt?.trim() ||
+          runtime.voiceSettings.systemPrompt?.trim() ||
+          DEFAULT_SYSTEM_PROMPT
+      ),
+      retrievedMemories
     ),
     aliasRules
   );
@@ -261,9 +292,25 @@ export async function POST(request: NextRequest) {
       responseModel = LLM_MODEL;
     }
 
+    if (memoryQuery) {
+      await upsertConversationMemory({
+        userText: applyNameAliases(memoryQuery, aliasRules),
+        assistantText: content,
+        source: normalizeMemorySource(body.memorySource),
+      }).catch(() => undefined);
+    }
+
     return NextResponse.json({
       content,
       model: responseModel,
+      memories: retrievedMemories.map((memory) => ({
+        id: memory.id,
+        title: memory.title,
+        type: memory.type,
+        source: memory.source,
+        score: memory.score,
+        matchedBy: memory.matchedBy,
+      })),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown model bridge error.";

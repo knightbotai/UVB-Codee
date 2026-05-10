@@ -8,7 +8,7 @@ export interface MemoryEntry {
   timestamp: number;
   tags: string[];
   sizeBytes: number;
-  source: "chat" | "manual";
+  source: "chat" | "manual" | "telegram" | "system";
 }
 
 export const LOCAL_MEMORY_KEY = "uvb:manual-memory-bank";
@@ -49,7 +49,12 @@ export function loadManualMemoryEntries(): MemoryEntry[] {
             timestamp: typeof entry.timestamp === "number" ? entry.timestamp : Date.now(),
             tags: Array.isArray(entry.tags) ? entry.tags.map(safeText).filter(Boolean) : [],
             sizeBytes: typeof entry.sizeBytes === "number" ? entry.sizeBytes : 0,
-            source: "manual" as const,
+            source:
+              entry.source === "chat" ||
+              entry.source === "telegram" ||
+              entry.source === "system"
+                ? entry.source
+                : ("manual" as const),
           }))
           .filter((entry) => entry.content)
       : [];

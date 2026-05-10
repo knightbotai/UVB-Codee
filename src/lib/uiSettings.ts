@@ -71,7 +71,7 @@ export const DEFAULT_UI_SETTINGS: UiSettings = {
   notifyVoiceReady: true,
   notifySystemAlerts: true,
   soundEffectsEnabled: false,
-  ragRetrievalEnabled: false,
+  ragRetrievalEnabled: true,
 };
 
 export function normalizeUiSettings(settings: Partial<UiSettings> = {}): UiSettings {
