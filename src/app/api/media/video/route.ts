@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { loadRuntimeSettings } from "@/lib/serverRuntimeSettings";
+import { applyNameAliases } from "@/lib/nameAliases";
+import { cleanSttTranscript } from "@/lib/sttCleanup";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -15,7 +17,7 @@ const DEFAULT_STT_MODEL =
   process.env.UVB_STT_MODEL ?? "Systran/faster-distil-whisper-large-v3";
 const DEFAULT_STT_PROMPT =
   process.env.UVB_STT_PROMPT ??
-  "Transcribe spoken English with natural punctuation, capitalization, sentence boundaries, commas, periods, and question marks. Preserve the speaker's words exactly.";
+  "Punctuated English transcript. Vocabulary: Sophia, Richard, Jusstin, Codee, Butt Stuff.";
 const DEFAULT_VIDEO_FRAME_COUNT = Number.parseInt(
   process.env.UVB_LOCAL_VIDEO_FRAME_COUNT ?? "8",
   10
@@ -220,6 +222,12 @@ async function transcribeAudio(audioPath: string) {
     payload.append("response_format", process.env.UVB_STT_RESPONSE_FORMAT ?? "json");
     payload.append("temperature", process.env.UVB_STT_TEMPERATURE ?? "0");
     payload.append("prompt", DEFAULT_STT_PROMPT);
+    payload.append("vad_filter", process.env.UVB_STT_VAD_FILTER ?? "false");
+    payload.append("condition_on_previous_text", process.env.UVB_STT_CONDITION_ON_PREVIOUS_TEXT ?? "false");
+    payload.append("no_speech_threshold", process.env.UVB_STT_NO_SPEECH_THRESHOLD ?? "0.72");
+    payload.append("compression_ratio_threshold", process.env.UVB_STT_COMPRESSION_RATIO_THRESHOLD ?? "2.2");
+    payload.append("log_prob_threshold", process.env.UVB_STT_LOG_PROB_THRESHOLD ?? "-0.8");
+    payload.append("hotwords", process.env.UVB_STT_HOTWORDS ?? "Sophia, Richard, Jusstin, Codee, Butt Stuff");
 
     const response = await fetch(DEFAULT_STT_URL, { method: "POST", body: payload });
     const rawText = await response.text();
@@ -229,9 +237,9 @@ async function transcribeAudio(audioPath: string) {
 
     try {
       const data = JSON.parse(rawText) as { text?: string };
-      return data.text?.trim() || rawText.trim();
+      return applyNameAliases(cleanSttTranscript(data.text?.trim() || rawText.trim()));
     } catch {
-      return rawText.trim();
+      return applyNameAliases(cleanSttTranscript(rawText.trim()));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown transcription error.";

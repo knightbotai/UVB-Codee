@@ -105,18 +105,18 @@ const MODEL_PRESETS = [
 const AGENT_CAPABILITY_READINESS = [
   {
     title: "Web Research",
-    status: "configured",
-    detail: "Permissions, domains, and network scope are saved. Needs the supervised browser runner to execute from Sophia.",
+    status: "partial",
+    detail: "Permissions, domains, and network scope are saved. Sophia can queue research work, but execution still needs the supervised browser runner.",
   },
   {
     title: "Browser Use",
-    status: "configured",
-    detail: "Browser-use permission is modeled. Next step is a Playwright/browser-use job queue with screenshots and approvals.",
+    status: "staged",
+    detail: "Browser-use permission and job packets are modeled. Playwright/browser execution with screenshots and approvals is the next wiring step.",
   },
   {
     title: "Local Coding",
-    status: "configured",
-    detail: "Workspace, file, terminal, git, and provider preferences are saved. Needs the agent execution adapter before Sophia can patch code herself.",
+    status: "partial",
+    detail: "Workspace, file, terminal, git, and provider preferences are saved. Sophia can queue coding work, but patch execution needs the local coder adapter.",
   },
   {
     title: "Kilo Code Gateway",
