@@ -17,9 +17,11 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   model: "qwen36-35b-a3b-heretic-nvfp4",
   apiKey: "uvb-local",
   temperature: 0.7,
-  maxTokens: 1200,
+  maxTokens: 4096,
   enableThinking: false,
 };
+
+const LEGACY_DEFAULT_MAX_TOKENS = 1200;
 
 function normalizeBaseUrl(baseUrl: string) {
   const trimmed = baseUrl.trim();
@@ -33,6 +35,10 @@ function normalizeBaseUrl(baseUrl: string) {
 export function normalizeModelSettings(settings: Partial<ModelSettings> = {}): ModelSettings {
   const temperature = Number(settings.temperature);
   const maxTokens = Number(settings.maxTokens);
+  const normalizedMaxTokens =
+    !Number.isFinite(maxTokens) || maxTokens === LEGACY_DEFAULT_MAX_TOKENS
+      ? DEFAULT_MODEL_SETTINGS.maxTokens
+      : Math.min(8192, Math.max(128, maxTokens));
 
   return {
     provider: settings.provider?.trim() || DEFAULT_MODEL_SETTINGS.provider,
@@ -40,7 +46,7 @@ export function normalizeModelSettings(settings: Partial<ModelSettings> = {}): M
     model: settings.model?.trim() || DEFAULT_MODEL_SETTINGS.model,
     apiKey: settings.apiKey?.trim() || DEFAULT_MODEL_SETTINGS.apiKey,
     temperature: Number.isFinite(temperature) ? temperature : DEFAULT_MODEL_SETTINGS.temperature,
-    maxTokens: Number.isFinite(maxTokens) ? maxTokens : DEFAULT_MODEL_SETTINGS.maxTokens,
+    maxTokens: normalizedMaxTokens,
     enableThinking: settings.enableThinking ?? DEFAULT_MODEL_SETTINGS.enableThinking,
   };
 }

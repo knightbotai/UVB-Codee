@@ -15,7 +15,7 @@ export const DEFAULT_CURRENT_USER_CONTEXT: Required<CurrentUserContext> = {
 };
 
 const PROFILE_ANCHOR_NOTE =
-  "Known profile anchors: Richard is James Richard Scott / TacImpulse, a 6'1\", about 220 lb, bald, bearded man. Jusstin is separate, about 5'8\", slimmer, usually with head hair and little significant facial hair. Do not swap their identities in conversation or image descriptions.";
+  "Known profile anchors: Richard is James Richard Scott / TacImpulse, a 6'1\", about 220 lb, large-framed bald or shaved-head man who often wears a cap and has a full beard. Jusstin is separate: about 5'8\", slimmer, usually has head hair, may sometimes wear a hat, and has patchier facial hair rather than Richard's full beard. Do not swap their identities in conversation or image descriptions. Treat these as user-provided descriptive anchors, not biometric certainty.";
 
 export function normalizeCurrentUserContext(
   context: CurrentUserContext = DEFAULT_CURRENT_USER_CONTEXT

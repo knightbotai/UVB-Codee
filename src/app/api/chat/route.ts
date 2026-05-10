@@ -17,6 +17,7 @@ import {
 const LLM_BASE_URL = process.env.UVB_LLM_BASE_URL ?? "http://127.0.0.1:8003/v1";
 const LLM_MODEL = process.env.UVB_LLM_MODEL ?? "qwen36-35b-a3b-heretic-nvfp4";
 const LLM_API_KEY = process.env.UVB_LLM_API_KEY ?? "uvb-local";
+const DEFAULT_MAX_TOKENS = Number.parseInt(process.env.UVB_CHAT_DEFAULT_MAX_TOKENS ?? "4096", 10);
 const MAX_MODEL_HISTORY_MESSAGES = 18;
 const MAX_MODEL_TEXT_CHARS = 6_000;
 const MAX_MODEL_TOTAL_TEXT_CHARS = 70_000;
@@ -239,7 +240,7 @@ export async function POST(request: NextRequest) {
     : 0.7;
   const maxTokens = Number.isFinite(settings.maxTokens)
     ? Number(settings.maxTokens)
-    : 1200;
+    : DEFAULT_MAX_TOKENS;
   const enableThinking = settings.enableThinking ?? false;
 
   const compactableMessages = userMessages

@@ -77,6 +77,8 @@ const MAX_TEXT_DOCUMENT_BYTES = 512 * 1024;
 const MAX_TEXT_DOCUMENT_CHARS = 120_000;
 const MAX_CHAT_HISTORY_MESSAGES = 16;
 const MAX_CHAT_HISTORY_TEXT_CHARS = 6_000;
+const LONG_FORM_MAX_TOKENS = 6144;
+const WEB_TTS_CHUNK_CHARS = 3200;
 const IMAGE_FILE_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -467,6 +469,52 @@ function sanitizeTextForSpeech(text: string) {
     .trim();
 }
 
+function wantsLongFormResponse(text: string) {
+  return /\b(long[-\s]?form|very\s+long|full\s+(breakdown|analysis|version|response)|deep\s+dive|in[-\s]?depth|comprehensive|thorough|detailed|take\s+your\s+time|do\s+not\s+summarize|don't\s+summarize|complete\s+answer)\b/i.test(
+    text
+  );
+}
+
+function splitTextForSpeech(text: string) {
+  const cleanText = text.replace(/\s+/g, " ").trim();
+  if (!cleanText) return [];
+
+  const chunks: string[] = [];
+  let remaining = cleanText;
+  while (remaining.length) {
+    if (remaining.length <= WEB_TTS_CHUNK_CHARS) {
+      chunks.push(remaining);
+      break;
+    }
+
+    const windowText = remaining.slice(0, WEB_TTS_CHUNK_CHARS);
+    const paragraphBreak = windowText.lastIndexOf("\n\n");
+    const sentenceBreak = Math.max(
+      windowText.lastIndexOf(". "),
+      windowText.lastIndexOf("! "),
+      windowText.lastIndexOf("? "),
+      windowText.lastIndexOf("; ")
+    );
+    const commaBreak = Math.max(windowText.lastIndexOf(", "), windowText.lastIndexOf(": "));
+    const spaceBreak = windowText.lastIndexOf(" ");
+    const breakAt =
+      paragraphBreak > Math.floor(WEB_TTS_CHUNK_CHARS * 0.35)
+        ? paragraphBreak
+        : sentenceBreak > Math.floor(WEB_TTS_CHUNK_CHARS * 0.45)
+          ? sentenceBreak + 1
+          : commaBreak > Math.floor(WEB_TTS_CHUNK_CHARS * 0.55)
+            ? commaBreak + 1
+            : spaceBreak > Math.floor(WEB_TTS_CHUNK_CHARS * 0.5)
+              ? spaceBreak
+              : WEB_TTS_CHUNK_CHARS;
+
+    chunks.push(remaining.slice(0, breakAt).trim());
+    remaining = remaining.slice(breakAt).trim();
+  }
+
+  return chunks.filter(Boolean);
+}
+
 interface ChatConfig {
   llmConfigured: boolean;
   connected: boolean;
@@ -655,6 +703,7 @@ export default function ChatInterface() {
   const recordingActionRef = useRef<"edit" | "send">("edit");
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const speechAudioUrlRef = useRef<string | null>(null);
+  const speechPlaybackRunRef = useRef(0);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
@@ -754,6 +803,7 @@ export default function ChatInterface() {
   }, []);
 
   const clearSpeechAudioSource = useCallback(() => {
+    speechPlaybackRunRef.current += 1;
     const audio = audioPlayerRef.current;
     if (!audio) {
       revokeSpeechAudioUrl();
@@ -1157,60 +1207,82 @@ export default function ChatInterface() {
   const speakText = async (text: string, options: { force?: boolean } = {}) => {
     const speechText = sanitizeTextForSpeech(text);
     if ((!options.force && !voiceSettings.autoSpeak) || !speechText) return;
+    const chunks = splitTextForSpeech(speechText);
+    if (!chunks.length) return;
 
-    setActivityStatus("Speaking with Kokoro...");
-    const response = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: speechText,
-        endpoint: voiceSettings.ttsUrl,
-        voice: voiceSettings.ttsVoice,
-      }),
-    });
+    const runId = Date.now();
+    speechPlaybackRunRef.current = runId;
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new Error(data.error ?? "TTS playback failed.");
-    }
+    const playChunk = async (index: number) => {
+      if (speechPlaybackRunRef.current !== runId) return;
+      const chunk = chunks[index];
+      if (!chunk) return;
+      const partLabel = chunks.length > 1 ? ` (${index + 1}/${chunks.length})` : "";
 
-    const audioBlob = await response.blob();
-    const audioUrl = URL.createObjectURL(audioBlob);
+      setActivityStatus(`Speaking with Kokoro${partLabel}...`);
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: chunk,
+          endpoint: voiceSettings.ttsUrl,
+          voice: voiceSettings.ttsVoice,
+        }),
+      });
 
-    if (!audioPlayerRef.current) {
-      audioPlayerRef.current = new Audio();
-    }
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? "TTS playback failed.");
+      }
 
-    audioPlayerRef.current.pause();
-    revokeSpeechAudioUrl();
-    speechAudioUrlRef.current = audioUrl;
-    audioPlayerRef.current.src = audioUrl;
-    audioPlayerRef.current.volume = voiceSettings.volume;
-    audioPlayerRef.current.onplay = () => {
-      liveTurnStateRef.current = liveVoiceEnabledRef.current ? "speaking" : liveTurnStateRef.current;
-      if (liveVoiceEnabledRef.current) setLiveVoicePhase("speaking");
-      setIsSpeaking(true);
-      setIsSpeechPaused(false);
-      setHasSpeechReady(true);
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      if (!audioPlayerRef.current) {
+        audioPlayerRef.current = new Audio();
+      }
+
+      audioPlayerRef.current.pause();
+      revokeSpeechAudioUrl();
+      speechAudioUrlRef.current = audioUrl;
+      audioPlayerRef.current.src = audioUrl;
+      audioPlayerRef.current.volume = voiceSettings.volume;
+      audioPlayerRef.current.onplay = () => {
+        liveTurnStateRef.current = liveVoiceEnabledRef.current ? "speaking" : liveTurnStateRef.current;
+        if (liveVoiceEnabledRef.current) setLiveVoicePhase("speaking");
+        setIsSpeaking(true);
+        setIsSpeechPaused(false);
+        setHasSpeechReady(true);
+      };
+      audioPlayerRef.current.onpause = () => {
+        setIsSpeaking(false);
+        setIsSpeechPaused(audioPlayerRef.current?.currentTime ? true : false);
+      };
+      audioPlayerRef.current.ontimeupdate = () => {
+        setSpeechProgress(audioPlayerRef.current?.currentTime ?? 0);
+      };
+      audioPlayerRef.current.onloadedmetadata = () => {
+        setSpeechDuration(audioPlayerRef.current?.duration || 0);
+      };
+      audioPlayerRef.current.onended = () => {
+        revokeSpeechAudioUrl(audioUrl);
+        setIsSpeaking(false);
+        setIsSpeechPaused(false);
+        setSpeechProgress(0);
+        if (speechPlaybackRunRef.current !== runId) return;
+        if (index + 1 < chunks.length) {
+          void playChunk(index + 1).catch((error) => {
+            const message = error instanceof Error ? error.message : "TTS failed.";
+            setActivityStatus(message);
+          });
+          return;
+        }
+        setActivityStatus("Ready.");
+      };
+      await audioPlayerRef.current.play();
     };
-    audioPlayerRef.current.onpause = () => {
-      setIsSpeaking(false);
-      setIsSpeechPaused(audioPlayerRef.current?.currentTime ? true : false);
-    };
-    audioPlayerRef.current.ontimeupdate = () => {
-      setSpeechProgress(audioPlayerRef.current?.currentTime ?? 0);
-    };
-    audioPlayerRef.current.onloadedmetadata = () => {
-      setSpeechDuration(audioPlayerRef.current?.duration || 0);
-    };
-    audioPlayerRef.current.onended = () => {
-      revokeSpeechAudioUrl(audioUrl);
-      setIsSpeaking(false);
-      setIsSpeechPaused(false);
-      setSpeechProgress(0);
-      setActivityStatus("Ready.");
-    };
-    await audioPlayerRef.current.play();
+
+    await playChunk(0);
   };
 
   const replayMessageSpeech = async (text: string) => {
@@ -1281,19 +1353,27 @@ export default function ChatInterface() {
         })) ?? [];
 
     try {
+      const longFormRequested = wantsLongFormResponse(promptText);
       const voiceOptimizedModelSettings =
-        messageType === "voice"
+        messageType === "voice" && !longFormRequested
           ? {
               ...modelSettings,
               maxTokens: Math.min(modelSettings.maxTokens, 260),
               temperature: Math.min(modelSettings.temperature, 0.5),
             }
-          : modelSettings;
+          : longFormRequested
+            ? {
+                ...modelSettings,
+                maxTokens: Math.max(modelSettings.maxTokens, LONG_FORM_MAX_TOKENS),
+              }
+            : modelSettings;
       const voiceOptimizedSystemPrompt =
         messageType === "voice"
           ? [
               voiceSettings.systemPrompt,
-              "Voice-message response mode: answer naturally in a few spoken sentences. Avoid markdown unless the user asks for structure.",
+              longFormRequested
+                ? "Voice-message long-form response mode: the user explicitly asked for depth, so answer fully and do not prematurely summarize. Keep structure spoken-friendly and avoid ending just because the answer is long."
+                : "Voice-message response mode: answer naturally in a few spoken sentences. Avoid markdown unless the user asks for structure.",
             ]
               .filter(Boolean)
               .join("\n\n")
@@ -1391,17 +1471,24 @@ export default function ChatInterface() {
 
       const currentModelSettings = loadModelSettings();
       const currentVoiceSettings = loadVoiceSettings();
+      const liveLongFormRequested = wantsLongFormResponse(cleanTranscript);
       const liveModelSettings = {
         ...currentModelSettings,
-        maxTokens: Math.min(currentModelSettings.maxTokens, 160),
-        temperature: Math.min(currentModelSettings.temperature, 0.45),
+        maxTokens: liveLongFormRequested
+          ? Math.max(currentModelSettings.maxTokens, LONG_FORM_MAX_TOKENS)
+          : Math.min(currentModelSettings.maxTokens, 160),
+        temperature: liveLongFormRequested
+          ? currentModelSettings.temperature
+          : Math.min(currentModelSettings.temperature, 0.45),
       };
       const liveSystemPrompt = [
         appendNameAliasSystemNote(
           appendCurrentUserSystemNote(currentVoiceSettings.systemPrompt, currentUserContext),
           loadAliasRules()
         ),
-        "Live voice response mode: answer in one or two short spoken sentences. No markdown, no lists, no headings unless the user explicitly asks.",
+        liveLongFormRequested
+          ? "Live voice long-form response mode: the user explicitly asked for a long or detailed answer, so answer fully. Use short spoken sections and do not cut off early."
+          : "Live voice response mode: answer in one or two short spoken sentences. No markdown, no lists, no headings unless the user explicitly asks.",
       ]
         .filter(Boolean)
         .join("\n\n");
