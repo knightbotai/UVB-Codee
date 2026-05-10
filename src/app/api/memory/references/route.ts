@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   deleteReferenceImage,
   listReferenceImages,
+  matchReferenceImages,
   upsertReferenceImage,
   type ReferenceImageEntry,
 } from "@/lib/serverReferenceGallery";
@@ -27,7 +28,9 @@ export async function POST(request: NextRequest) {
     action?: unknown;
     id?: unknown;
     entry?: Partial<ReferenceImageEntry>;
+    visualEmbedding?: unknown;
     analyze?: unknown;
+    limit?: unknown;
   };
   const action = safeText(payload.action, "upsert");
 
@@ -44,6 +47,14 @@ export async function POST(request: NextRequest) {
         analyze: payload.analyze !== false,
       });
       return NextResponse.json({ ok: true, entry, entries: await listReferenceImages() });
+    }
+
+    if (action === "match") {
+      const matches = await matchReferenceImages(
+        Array.isArray(payload.visualEmbedding) ? payload.visualEmbedding : [],
+        typeof payload.limit === "number" ? payload.limit : 5
+      );
+      return NextResponse.json({ ok: true, matches });
     }
 
     return NextResponse.json({ error: "unknown action." }, { status: 400 });

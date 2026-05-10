@@ -13,6 +13,7 @@ import {
   upsertConversationMemory,
   type MemorySource,
 } from "@/lib/serverMemory";
+import { matchReferenceImages, type ReferenceImageMatch } from "@/lib/serverReferenceGallery";
 
 const LLM_BASE_URL = process.env.UVB_LLM_BASE_URL ?? "http://127.0.0.1:8003/v1";
 const LLM_MODEL = process.env.UVB_LLM_MODEL ?? "qwen36-35b-a3b-heretic-nvfp4";
@@ -47,6 +48,7 @@ interface ChatRequestBody {
     enableThinking?: boolean;
   };
   memorySource?: MemorySource;
+  visualEmbeddings?: number[][];
 }
 
 interface OpenAIChatResponse {
@@ -217,6 +219,19 @@ function memorySearchQueryForLatestTurn(messages: ChatMessage[], aliasRules: Ali
     .join("\n");
 }
 
+function appendVisualReferenceSystemNote(systemPrompt: string, matches: ReferenceImageMatch[]) {
+  const activeMatches = matches.filter((match) => match.visualScore > 0.45).slice(0, 5);
+  if (!activeMatches.length) return systemPrompt;
+  return [
+    systemPrompt.trim(),
+    "Visual Reference Gallery matches: these are user-approved reference images matched by local visual embeddings. Treat them as candidate identity/context signals, not biometric certainty. Use confidence language and compare visible traits.",
+    ...activeMatches.map((match, index) => {
+      const score = Number.isFinite(match.visualScore) ? match.visualScore.toFixed(3) : "n/a";
+      return `${index + 1}. [${match.matchedBy} score=${score}] ${match.personName} / ${match.title}: ${match.caption || match.notes}`;
+    }),
+  ].join("\n");
+}
+
 function normalizeMemorySource(value: unknown): MemorySource {
   return value === "telegram" || value === "system" || value === "manual" ? value : "chat";
 }
@@ -239,14 +254,27 @@ export async function POST(request: NextRequest) {
   const retrievedMemories = retrievalQuery
     ? await searchMemoryEntries(retrievalQuery, 10).catch(() => [])
     : [];
+  const visualMatches = Array.isArray(body.visualEmbeddings)
+    ? (
+        await Promise.all(
+          body.visualEmbeddings
+            .filter((embedding) => Array.isArray(embedding))
+            .slice(0, 3)
+            .map((embedding) => matchReferenceImages(embedding, 5).catch(() => []))
+        )
+      ).flat()
+    : [];
   const systemPrompt = appendNameAliasSystemNote(
-    appendRetrievedMemorySystemNote(
-      appendCurrentUserSystemNote(
-        body.systemPrompt?.trim() ||
-          runtime.voiceSettings.systemPrompt?.trim() ||
-          DEFAULT_SYSTEM_PROMPT
+    appendVisualReferenceSystemNote(
+      appendRetrievedMemorySystemNote(
+        appendCurrentUserSystemNote(
+          body.systemPrompt?.trim() ||
+            runtime.voiceSettings.systemPrompt?.trim() ||
+            DEFAULT_SYSTEM_PROMPT
+        ),
+        retrievedMemories
       ),
-      retrievedMemories
+      visualMatches
     ),
     aliasRules
   );
@@ -329,6 +357,13 @@ export async function POST(request: NextRequest) {
         source: memory.source,
         score: memory.score,
         matchedBy: memory.matchedBy,
+      })),
+      visualMatches: visualMatches.slice(0, 5).map((match) => ({
+        id: match.id,
+        personName: match.personName,
+        title: match.title,
+        score: match.visualScore,
+        matchedBy: match.matchedBy,
       })),
     });
   } catch (error) {

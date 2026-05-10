@@ -54,6 +54,7 @@ import {
 } from "@/lib/currentUserContext";
 import { appendMemorySystemNote } from "@/lib/memoryContext";
 import { cleanSttTranscript } from "@/lib/sttCleanup";
+import { dataUrlToVisualEmbedding, VISUAL_EMBEDDING_MODEL } from "@/lib/visualEmbeddings";
 
 function generateId() {
   return Math.random().toString(36).substring(2, 11);
@@ -543,7 +544,8 @@ async function sendChatToModel(
   settings: ModelSettings,
   systemPrompt: string,
   signal?: AbortSignal,
-  currentUserContext?: CurrentUserContext
+  currentUserContext?: CurrentUserContext,
+  visualEmbeddings: number[][] = []
 ) {
   const aliasRules = loadAliasRules();
   const normalizedMessages = messages.map((message) => ({
@@ -565,6 +567,7 @@ async function sendChatToModel(
       aliasRules
     ),
     aliasRules,
+    visualEmbeddings,
   });
   const requestInit: RequestInit = {
     method: "POST",
@@ -1382,7 +1385,9 @@ export default function ChatInterface() {
       const response = await sendChatToModel([
         ...priorMessages,
         compactModelMessage({ role: "user", content: buildModelContent(promptText, attachments) }),
-      ], voiceOptimizedModelSettings, voiceOptimizedSystemPrompt, abortController.signal, currentUserContext);
+      ], voiceOptimizedModelSettings, voiceOptimizedSystemPrompt, abortController.signal, currentUserContext, attachments
+        .map((attachment) => attachment.visualEmbedding)
+        .filter((embedding): embedding is number[] => Array.isArray(embedding) && embedding.length > 0));
       setAvatarResponsePhase("writing");
       const aiMsg: ChatMessage = {
         id: generateId(),
@@ -2406,6 +2411,7 @@ export default function ChatInterface() {
           const attachments = await Promise.all(
             readableImages.map(async (file) => {
               const normalizedImage = await fileToModelImageDataUrl(file);
+              const visualEmbedding = await dataUrlToVisualEmbedding(normalizedImage.dataUrl);
               return {
                 id: generateId(),
                 name: file.name,
@@ -2413,6 +2419,8 @@ export default function ChatInterface() {
                 dataUrl: normalizedImage.dataUrl,
                 size: normalizedImage.size,
                 kind: "image" as const,
+                visualEmbedding,
+                visualEmbeddingModel: VISUAL_EMBEDDING_MODEL,
               };
             })
           );

@@ -13,6 +13,8 @@ export interface ChatAttachment {
   dataUrl?: string;
   size: number;
   kind: "image" | "file";
+  visualEmbedding?: number[];
+  visualEmbeddingModel?: string;
 }
 
 export interface ChatMessage {
@@ -160,6 +162,10 @@ function normalizeAttachment(value: unknown): ChatAttachment | null {
     dataUrl: dataUrl || undefined,
     size: typeof attachment.size === "number" && Number.isFinite(attachment.size) ? attachment.size : 0,
     kind: attachment.kind === "image" ? "image" : "file",
+    visualEmbedding: Array.isArray(attachment.visualEmbedding)
+      ? attachment.visualEmbedding.filter((value) => typeof value === "number" && Number.isFinite(value))
+      : undefined,
+    visualEmbeddingModel: safeText(attachment.visualEmbeddingModel) || undefined,
   };
 }
 
@@ -181,6 +187,8 @@ function prepareThreadForStorage(thread: ChatThread): ChatThread {
       attachments: message.attachments?.map((attachment) => ({
         ...attachment,
         dataUrl: undefined,
+        visualEmbedding: attachment.visualEmbedding,
+        visualEmbeddingModel: attachment.visualEmbeddingModel,
       })),
     }));
 

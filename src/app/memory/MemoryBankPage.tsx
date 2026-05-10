@@ -21,6 +21,7 @@ import {
   saveAliasRules,
   type AliasRule,
 } from "@/lib/nameAliases";
+import { dataUrlToVisualEmbedding, VISUAL_EMBEDDING_MODEL } from "@/lib/visualEmbeddings";
 
 type MemoryType = "conversation" | "knowledge" | "context" | "preference";
 type MemorySource = "chat" | "manual" | "telegram" | "system";
@@ -63,6 +64,8 @@ interface ReferenceImageEntry {
   tags: string[];
   memoryId: string;
   analysisModel: string;
+  visualEmbedding: number[];
+  visualEmbeddingModel: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -389,7 +392,7 @@ export default function MemoryBankPage() {
       const dataUrl = await imageFileToReferenceDataUrl(file);
       setReferenceImageDataUrl(dataUrl);
       setReferenceFileName(file.name || "reference-image.jpg");
-      setReferenceStatus("Reference image ready. Save to caption and index it.");
+      setReferenceStatus("Reference image ready. Save to caption, embed, and index it.");
     } catch (error) {
       setReferenceStatus(error instanceof Error ? error.message : "Could not prepare reference image.");
     }
@@ -421,13 +424,15 @@ export default function MemoryBankPage() {
         .map((tag) => tag.trim())
         .filter(Boolean),
       memoryId: existing?.memoryId,
+      visualEmbedding: await dataUrlToVisualEmbedding(referenceImageDataUrl),
+      visualEmbeddingModel: VISUAL_EMBEDDING_MODEL,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
 
     try {
       setReferenceSaving(true);
-      setReferenceStatus("Captioning reference image locally and embedding it into Qdrant...");
+      setReferenceStatus("Captioning reference image locally and indexing caption plus visual embedding...");
       const response = await fetch("/api/memory/references", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -742,6 +747,9 @@ export default function MemoryBankPage() {
                       <span className="rounded-full bg-uvb-dark-gray/60 px-2 py-1">{entry.relationship}</span>
                       <span className="rounded-full bg-uvb-dark-gray/60 px-2 py-1">
                         {entry.analysisModel || "manual caption"}
+                      </span>
+                      <span className="rounded-full bg-uvb-dark-gray/60 px-2 py-1">
+                        {entry.visualEmbedding?.length ? `${entry.visualEmbedding.length}d visual` : "no visual vector"}
                       </span>
                       {entry.tags.map((tag) => (
                         <span key={tag} className="rounded-full bg-uvb-dark-gray/60 px-2 py-1">
