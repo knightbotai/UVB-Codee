@@ -1301,6 +1301,8 @@ export default function ChatInterface() {
       }
 
       const audioBlob = await response.blob();
+      const providerFallback = response.headers.get("X-UVB-TTS-Provider-Fallback");
+      const fallbackReason = response.headers.get("X-UVB-TTS-Fallback-Reason");
       const audioUrl = URL.createObjectURL(audioBlob);
 
       if (!audioPlayerRef.current) {
@@ -1318,6 +1320,13 @@ export default function ChatInterface() {
         setIsSpeaking(true);
         setIsSpeechPaused(false);
         setHasSpeechReady(true);
+        if (providerFallback) {
+          setActivityStatus(
+            `Speaking with ${providerFallback} fallback${
+              fallbackReason ? ` (${fallbackReason})` : ""
+            }...`
+          );
+        }
       };
       audioPlayerRef.current.onpause = () => {
         setIsSpeaking(false);

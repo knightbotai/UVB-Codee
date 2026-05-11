@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 const DEFAULT_TTS_URL = process.env.UVB_TTS_URL ?? "http://127.0.0.1:8880/v1/audio/speech";
 const DEFAULT_TTS_VOICE = process.env.UVB_TTS_VOICE ?? "af_nova";
+const ORPHEUS_TTS_TIMEOUT_MS = Number.parseInt(
+  process.env.UVB_ORPHEUS_TTS_TIMEOUT_MS ?? "12000",
+  10
+);
 
 interface TtsRequestBody {
   text?: string;
@@ -45,18 +49,62 @@ export async function POST(request: NextRequest) {
   const provider = body.provider?.trim() || "kokoro";
   const model = body.model?.trim();
 
-  const synthesize = (selectedVoice: string) =>
-    fetch(endpoint, {
+  const synthesize = (
+    selectedVoice: string,
+    selectedEndpoint = endpoint,
+    selectedProvider = provider,
+    selectedModel: string | null = model ?? null
+  ) => {
+    const timeoutMs =
+      selectedProvider === "orpheus-fastapi" && Number.isFinite(ORPHEUS_TTS_TIMEOUT_MS)
+        ? ORPHEUS_TTS_TIMEOUT_MS
+        : 120000;
+
+    return fetch(selectedEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
         input: text,
         voice: selectedVoice,
-        ...(model ? { model } : {}),
-        ...(provider === "orpheus-fastapi" ? { response_format: "wav" } : {}),
-        ...(provider.startsWith("moss-") ? { response_format: "mp3" } : {}),
+        ...(selectedModel ? { model: selectedModel } : {}),
+        ...(selectedProvider === "orpheus-fastapi" ? { response_format: "wav" } : {}),
+        ...(selectedProvider.startsWith("moss-") ? { response_format: "mp3" } : {}),
       }),
     });
+  };
+
+  const synthesizeFallback = async (reason: string) => {
+    const fallbackResponse = await synthesize(
+      DEFAULT_TTS_VOICE,
+      DEFAULT_TTS_URL,
+      "kokoro",
+      null
+    );
+
+    if (!fallbackResponse.ok) {
+      const rawText = await fallbackResponse.text();
+      return NextResponse.json(
+        {
+          error: `Orpheus failed (${reason}), then Kokoro fallback returned ${fallbackResponse.status}: ${
+            rawText || fallbackResponse.statusText
+          }`,
+        },
+        { status: 502 }
+      );
+    }
+
+    const contentType = fallbackResponse.headers.get("content-type") ?? "audio/wav";
+    const audio = await fallbackResponse.arrayBuffer();
+    return new NextResponse(audio, {
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "no-store",
+        "X-UVB-TTS-Provider-Fallback": "kokoro",
+        "X-UVB-TTS-Fallback-Reason": reason.slice(0, 160),
+      },
+    });
+  };
 
   try {
     let response = await synthesize(voice);
@@ -92,6 +140,10 @@ export async function POST(request: NextRequest) {
     const contentType = response.headers.get("content-type") ?? "audio/wav";
     const audio = await response.arrayBuffer();
 
+    if (provider === "orpheus-fastapi" && audio.byteLength < 16000) {
+      return synthesizeFallback(`empty Orpheus audio (${audio.byteLength} bytes)`);
+    }
+
     return new NextResponse(audio, {
       headers: {
         "Content-Type": contentType,
@@ -100,6 +152,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown TTS bridge error.";
+    if (provider === "orpheus-fastapi") {
+      return synthesizeFallback(message);
+    }
     return NextResponse.json({ error: `Could not reach TTS endpoint: ${message}` }, { status: 502 });
   }
 }
