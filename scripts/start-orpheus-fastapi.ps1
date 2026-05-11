@@ -2,6 +2,8 @@ param(
   [string]$SidecarRoot = "Z:\Models\_uvb-sidecars\Orpheus-FastAPI",
   [ValidateSet("Q2_K", "Q4_K_M", "Q8_0")]
   [string]$Quant = "Q2_K",
+  [ValidateSet("cuda", "cpu", "mps", "auto")]
+  [string]$SnacDevice = "cuda",
   [switch]$Foreground
 )
 
@@ -17,22 +19,33 @@ if (-not (Test-Path $SidecarRoot)) {
 }
 
 $modelName = "Orpheus-3b-FT-$Quant.gguf"
+$resolvedSnacDevice = if ($SnacDevice -eq "auto") { "" } else { $SnacDevice }
 $envPath = Join-Path $SidecarRoot ".env"
 $envContent = @"
 ORPHEUS_API_URL=http://llama-cpp-server:5006/v1/completions
 ORPHEUS_API_TIMEOUT=120
-ORPHEUS_MAX_TOKENS=512
+ORPHEUS_MAX_TOKENS=1536
 ORPHEUS_TEMPERATURE=0.6
 ORPHEUS_TOP_P=0.9
 ORPHEUS_SAMPLE_RATE=24000
 ORPHEUS_MODEL_NAME=$modelName
-ORPHEUS_SNAC_DEVICE=cpu
+ORPHEUS_SNAC_DEVICE=$resolvedSnacDevice
 ORPHEUS_PORT=5005
 ORPHEUS_HOST=0.0.0.0
 UID=1000
 GID=1000
 "@
 Set-Content -Path $envPath -Value $envContent -Encoding UTF8
+
+$dockerfileGpuPath = Join-Path $SidecarRoot "Dockerfile.gpu"
+if (Test-Path $dockerfileGpuPath) {
+  $dockerfileGpu = Get-Content -Raw -Path $dockerfileGpuPath
+  $oldTorchInstall = 'RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 && \'
+  $newTorchInstall = 'RUN pip3 install --no-cache-dir torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 && \'
+  if ($dockerfileGpu.Contains($oldTorchInstall)) {
+    Set-Content -Path $dockerfileGpuPath -Value $dockerfileGpu.Replace($oldTorchInstall, $newTorchInstall) -Encoding UTF8
+  }
+}
 
 $speechPipePath = Join-Path $SidecarRoot "tts_engine\speechpipe.py"
 if (Test-Path $speechPipePath) {

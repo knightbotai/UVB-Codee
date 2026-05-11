@@ -3277,8 +3277,8 @@ export default function ChatInterface() {
                   onKeyDown={handleKeyDown}
                   placeholder={`Message ${identitySettings.assistantName}...`}
                   aria-label={`Message ${identitySettings.assistantName}`}
-                  className="input-field resize-none min-h-[44px] max-h-32 pr-12"
-                  rows={1}
+                  className="input-field min-h-[96px] max-h-[40vh] resize-y overflow-auto pr-12"
+                  rows={4}
                 />
                 <div className="absolute right-2 bottom-2 flex gap-1">
                   <button
