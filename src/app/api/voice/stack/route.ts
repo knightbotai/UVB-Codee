@@ -46,6 +46,11 @@ const SIDECAR_REPOS: Record<string, { repo: string; directory: string; priority:
     directory: "VibeVoice",
     priority: 1,
   },
+  "orpheus-fastapi": {
+    repo: "https://github.com/Lex-au/Orpheus-FastAPI.git",
+    directory: "Orpheus-FastAPI",
+    priority: 1,
+  },
   "f5-tts": {
     repo: "https://github.com/SWivid/F5-TTS.git",
     directory: "F5-TTS",

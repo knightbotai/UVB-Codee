@@ -13,6 +13,7 @@ $repos = @(
   @{ Name = "chatterbox"; Url = "https://github.com/resemble-ai/chatterbox.git"; Priority = 1 },
   @{ Name = "Chatterbox-TTS-Server"; Url = "https://github.com/devnen/Chatterbox-TTS-Server.git"; Priority = 1 },
   @{ Name = "VibeVoice"; Url = "https://github.com/microsoft/VibeVoice.git"; Priority = 1 },
+  @{ Name = "Orpheus-FastAPI"; Url = "https://github.com/Lex-au/Orpheus-FastAPI.git"; Priority = 1 },
   @{ Name = "fish-speech"; Url = "https://github.com/fishaudio/fish-speech.git"; Priority = 2 },
   @{ Name = "whisper.cpp"; Url = "https://github.com/ggml-org/whisper.cpp.git"; Priority = 2 },
   @{ Name = "faster-whisper"; Url = "https://github.com/SYSTRAN/faster-whisper.git"; Priority = 2 },

@@ -1482,6 +1482,7 @@ export default function SettingsPage() {
                           >
                             <option value="kokoro">Kokoro fallback</option>
                             <option value="piper-local">Piper local Pipecat TTS</option>
+                            <option value="orpheus-fastapi">Orpheus FastAPI streaming local</option>
                             <option value="moss-tts-nano">MOSS-TTS-Nano candidate</option>
                             <option value="moss-ttsd">MOSS-TTSD expressive candidate</option>
                             <option value="chatterbox-turbo">Chatterbox Turbo staged</option>
@@ -1489,6 +1490,62 @@ export default function SettingsPage() {
                             <option value="custom">Custom provider</option>
                           </select>
                         </div>
+                        {voiceSettings.liveTtsProvider === "orpheus-fastapi" && (
+                          <>
+                            <div className="col-span-2 rounded-lg border border-uvb-royal-purple-light/25 bg-uvb-royal-purple/10 p-3">
+                              <p className="text-xs font-semibold text-uvb-text-primary">
+                                Orpheus FastAPI streaming lane
+                              </p>
+                              <p className="mt-1 text-[11px] leading-relaxed text-uvb-text-muted">
+                                Orpheus is a local open-source, OpenAI-compatible TTS server
+                                candidate for higher quality realtime speech. Run the Orpheus
+                                sidecar locally, then point UVB at its /v1/audio/speech endpoint.
+                              </p>
+                            </div>
+                            <div>
+                              <label className="text-xs text-uvb-text-muted block mb-1.5">
+                                Orpheus TTS Endpoint
+                              </label>
+                              <input
+                                type="url"
+                                value={voiceSettings.orpheusTtsUrl}
+                                onChange={(event) =>
+                                  updateVoiceSettings({ orpheusTtsUrl: event.target.value })
+                                }
+                                className="input-field"
+                                placeholder="http://127.0.0.1:5005/v1/audio/speech"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-uvb-text-muted block mb-1.5">
+                                Orpheus Voice
+                              </label>
+                              <input
+                                type="text"
+                                value={voiceSettings.orpheusVoice}
+                                onChange={(event) =>
+                                  updateVoiceSettings({ orpheusVoice: event.target.value })
+                                }
+                                className="input-field"
+                                placeholder="tara"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-uvb-text-muted block mb-1.5">
+                                Orpheus Model
+                              </label>
+                              <input
+                                type="text"
+                                value={voiceSettings.orpheusModel}
+                                onChange={(event) =>
+                                  updateVoiceSettings({ orpheusModel: event.target.value })
+                                }
+                                className="input-field"
+                                placeholder="Orpheus-3b-FT-Q2_K.gguf"
+                              />
+                            </div>
+                          </>
+                        )}
                         {voiceSettings.liveTtsProvider === "piper-local" && (
                           <>
                             <div className="col-span-2 rounded-lg border border-uvb-neon-green/20 bg-uvb-neon-green/10 p-3">

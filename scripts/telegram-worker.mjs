@@ -89,6 +89,7 @@ const telegramTtsMaxParts = Number.parseInt(process.env.TELEGRAM_TTS_MAX_PARTS ?
 const telegramUvbSttTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_STT_TIMEOUT_MS ?? "120000", 10);
 const telegramUvbChatTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_CHAT_TIMEOUT_MS ?? "240000", 10);
 const telegramUvbTtsTimeoutMs = Number.parseInt(process.env.TELEGRAM_UVB_TTS_TIMEOUT_MS ?? "120000", 10);
+const telegramChatMaxTokens = Number.parseInt(process.env.TELEGRAM_CHAT_MAX_TOKENS ?? "900", 10);
 const telegramLongThinkMs = Number.parseInt(process.env.TELEGRAM_LONG_THINK_MS ?? "25000", 10);
 const telegramHistoryMessages = Number.parseInt(process.env.TELEGRAM_HISTORY_MESSAGES ?? "12", 10);
 const telegramHistoryTextChars = Number.parseInt(process.env.TELEGRAM_HISTORY_TEXT_CHARS ?? "5000", 10);
@@ -1096,7 +1097,17 @@ async function askKnightBot(chatId, content, logText) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages, memorySource: "telegram" }),
+        body: JSON.stringify({
+          messages,
+          memorySource: "telegram",
+          settings: {
+            maxTokens: Number.isFinite(telegramChatMaxTokens)
+              ? Math.min(Math.max(telegramChatMaxTokens, 128), 4096)
+              : 900,
+          },
+          systemPrompt:
+            "You are Sophia Knight replying through Telegram voice/text. Keep replies warm, direct, and naturally spoken. Prefer 2-5 concise paragraphs unless the user explicitly asks for a long-form answer.",
+        }),
       },
       telegramUvbChatTimeoutMs,
       "UVB chat"
@@ -1204,6 +1215,16 @@ async function handleMessage(message) {
       answer = await askKnightBot(chatId, content || text, logText);
     } catch (error) {
       const messageText = error instanceof Error ? error.message : "Unknown UVB chat error.";
+      if (messageText.toLowerCase().includes("uvb chat timed out")) {
+        answer = [
+          "I heard and transcribed your voice message, but the local model took too long to answer through Telegram.",
+          "",
+          "I am trimming the Telegram response budget so this should not jam up the bridge again. Please send that last thought one more time, love, and I should catch it cleanly.",
+        ].join("\n");
+        await logTelegramChatTurn(message, logText, answer, messageType);
+        await sendLongMessage(chatId, answer);
+        return;
+      }
       if (!fallbackContent || messageType !== "video") {
         throw error;
       }

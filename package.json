@@ -8,6 +8,7 @@
     "start": "next start",
     "telegram": "node scripts/telegram-worker.mjs",
     "voice:bootstrap": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-voice-stack.ps1 -SkipExisting",
+    "voice:orpheus": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/start-orpheus-fastapi.ps1",
     "avatar:bootstrap": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-avatar-engines.ps1",
     "avatar:patch-ui": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/patch-openavatarchat-ui.ps1",
     "avatar:openavatarchat": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/start-openavatarchat-liteavatar.ps1",

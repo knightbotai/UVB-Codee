@@ -262,6 +262,24 @@ def create_app() -> FastAPI:
                 if config_path:
                     kwargs["config_path"] = config_path
                 tts = PiperTTSService(**kwargs)
+            elif tts_provider == "orpheus-fastapi":
+                tts = OpenAITTSService(
+                    api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
+                    base_url=normalize_base_url(
+                        str(
+                            voice_settings.get("orpheusTtsUrl")
+                            or env("UVB_ORPHEUS_TTS_URL", "http://127.0.0.1:5005/v1")
+                        )
+                    ),
+                    model=str(
+                        voice_settings.get("orpheusModel")
+                        or env("UVB_ORPHEUS_MODEL", "orpheus")
+                    ),
+                    voice=str(
+                        voice_settings.get("orpheusVoice")
+                        or env("UVB_ORPHEUS_VOICE", "tara")
+                    ),
+                )
             else:
                 tts = OpenAITTSService(
                     api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),

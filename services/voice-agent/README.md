@@ -38,6 +38,14 @@ the full Pipecat pipeline in Settings to test Piper as the realtime audio-out
 provider. Paid/API-key Pipecat providers are intentionally not wired into the
 default UVB stack.
 
+Orpheus-FastAPI is represented as the higher-quality local streaming TTS lane:
+
+- `orpheus-fastapi`: local OpenAI-compatible `/v1/audio/speech` endpoint.
+
+Set `UVB_ORPHEUS_TTS_URL`, `UVB_ORPHEUS_VOICE`, and `UVB_ORPHEUS_MODEL` after
+starting the Orpheus sidecar. Use it when Kokoro is fast enough but not expressive
+enough, and benchmark it against Piper/Kokoro before making it the default.
+
 ## Run
 
 ```powershell

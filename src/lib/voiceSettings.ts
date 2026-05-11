@@ -15,6 +15,7 @@ export interface VoiceSettings {
   liveTtsProvider:
     | "kokoro"
     | "piper-local"
+    | "orpheus-fastapi"
     | "moss-tts-nano"
     | "moss-ttsd"
     | "chatterbox-turbo"
@@ -23,6 +24,9 @@ export interface VoiceSettings {
   liveVadProvider: "browser-manual" | "silero" | "ten-vad";
   piperVoicePath: string;
   piperConfigPath: string;
+  orpheusTtsUrl: string;
+  orpheusVoice: string;
+  orpheusModel: string;
   mossTtsUrl: string;
   mossTtsVoice: string;
   voiceProfileName: string;
@@ -53,6 +57,9 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   liveVadProvider: "browser-manual",
   piperVoicePath: "",
   piperConfigPath: "",
+  orpheusTtsUrl: "http://127.0.0.1:5005/v1/audio/speech",
+  orpheusVoice: "tara",
+  orpheusModel: "Orpheus-3b-FT-Q2_K.gguf",
   mossTtsUrl: "http://127.0.0.1:8890/v1/audio/speech",
   mossTtsVoice: "default",
   voiceProfileName: "Sophia / KnightBot Default",
@@ -97,6 +104,7 @@ export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): V
     liveTtsProvider: [
       "kokoro",
       "piper-local",
+      "orpheus-fastapi",
       "moss-tts-nano",
       "moss-ttsd",
       "chatterbox-turbo",
@@ -112,6 +120,9 @@ export function normalizeVoiceSettings(settings: Partial<VoiceSettings> = {}): V
       : DEFAULT_VOICE_SETTINGS.liveVadProvider,
     piperVoicePath: settings.piperVoicePath?.trim() || DEFAULT_VOICE_SETTINGS.piperVoicePath,
     piperConfigPath: settings.piperConfigPath?.trim() || DEFAULT_VOICE_SETTINGS.piperConfigPath,
+    orpheusTtsUrl: settings.orpheusTtsUrl?.trim() || DEFAULT_VOICE_SETTINGS.orpheusTtsUrl,
+    orpheusVoice: settings.orpheusVoice?.trim() || DEFAULT_VOICE_SETTINGS.orpheusVoice,
+    orpheusModel: settings.orpheusModel?.trim() || DEFAULT_VOICE_SETTINGS.orpheusModel,
     mossTtsUrl: settings.mossTtsUrl?.trim() || DEFAULT_VOICE_SETTINGS.mossTtsUrl,
     mossTtsVoice: settings.mossTtsVoice?.trim() || DEFAULT_VOICE_SETTINGS.mossTtsVoice,
     voiceProfileName:
