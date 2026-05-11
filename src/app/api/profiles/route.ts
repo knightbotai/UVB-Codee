@@ -1,115 +1,25 @@
-import { randomBytes, pbkdf2Sync } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  DEFAULT_OWNER_PROFILE,
-  DEFAULT_REMOTE_DOMAINS,
-  type PublicUserProfile,
-  type StoredUserProfile,
-  type UserAuthProvider,
-  type UserProfileStore,
   normalizeAuthProviders,
   normalizeAccessModes,
   normalizeProfileRole,
 } from "@/lib/userProfiles";
+import {
+  generateProfileId,
+  hashProfilePassword,
+  normalizeStoredUserProfile,
+  publicUserProfile,
+  readUserProfileStore,
+  safeProfileText,
+  splitProfileDomains,
+  writeUserProfileStore,
+} from "@/lib/serverUserProfileStore";
 
 export const runtime = "nodejs";
 
-const STORE_PATH = path.join(process.cwd(), ".uvb", "user-profiles.json");
-const PASSWORD_ITERATIONS = 210_000;
-
-function generateId() {
-  return `profile:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function safeText(value: unknown, fallback = "") {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
-
-function splitDomains(value: unknown) {
-  const domains = safeText(value)
-    .split(/[\n,]/)
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-  return domains.length ? domains : DEFAULT_REMOTE_DOMAINS;
-}
-
-function hashPassword(password: string) {
-  const salt = randomBytes(16).toString("hex");
-  const hash = pbkdf2Sync(password, salt, PASSWORD_ITERATIONS, 32, "sha256").toString("hex");
-  return { hash, salt, iterations: PASSWORD_ITERATIONS };
-}
-
-function publicProfile(profile: StoredUserProfile): PublicUserProfile {
-  return {
-    id: profile.id,
-    displayName: profile.displayName,
-    username: profile.username,
-    email: profile.email,
-    role: profile.role,
-    telegramChatId: profile.telegramChatId,
-    remoteDomains: profile.remoteDomains,
-    accessModes: profile.accessModes,
-    authProviders: profile.authProviders,
-    googleSubject: profile.googleSubject,
-    passkeyCredentialCount: profile.passkeyCredentialIds.length,
-    passwordConfigured: Boolean(profile.passwordHash),
-    createdAt: profile.createdAt,
-    updatedAt: profile.updatedAt,
-    notes: profile.notes,
-  };
-}
-
-function normalizeStoredProfile(profile: Partial<StoredUserProfile>): StoredUserProfile {
-  const now = Date.now();
-  return {
-    id: safeText(profile.id, generateId()),
-    displayName: safeText(profile.displayName, "UVB User"),
-    username: safeText(profile.username, safeText(profile.email, "uvb-user")),
-    email: safeText(profile.email),
-    role: normalizeProfileRole(profile.role),
-    telegramChatId: safeText(profile.telegramChatId),
-    remoteDomains: Array.isArray(profile.remoteDomains) && profile.remoteDomains.length
-      ? profile.remoteDomains.map((item) => safeText(item)).filter(Boolean)
-      : DEFAULT_REMOTE_DOMAINS,
-    accessModes: normalizeAccessModes(profile.accessModes),
-    authProviders: normalizeAuthProviders(profile.authProviders),
-    googleSubject: safeText(profile.googleSubject),
-    passkeyCredentialIds: Array.isArray(profile.passkeyCredentialIds)
-      ? profile.passkeyCredentialIds.map((item) => safeText(item)).filter(Boolean)
-      : [],
-    passkeyCredentialCount: Array.isArray(profile.passkeyCredentialIds) ? profile.passkeyCredentialIds.length : 0,
-    passwordConfigured: Boolean(profile.passwordHash),
-    passwordHash: safeText(profile.passwordHash),
-    passwordSalt: safeText(profile.passwordSalt),
-    passwordIterations: typeof profile.passwordIterations === "number" ? profile.passwordIterations : PASSWORD_ITERATIONS,
-    createdAt: typeof profile.createdAt === "number" ? profile.createdAt : now,
-    updatedAt: typeof profile.updatedAt === "number" ? profile.updatedAt : now,
-    notes: safeText(profile.notes),
-  };
-}
-
-async function readStore(): Promise<UserProfileStore> {
-  try {
-    const parsed = JSON.parse(await readFile(STORE_PATH, "utf8")) as Partial<UserProfileStore>;
-    const profiles = Array.isArray(parsed.profiles) ? parsed.profiles.map(normalizeStoredProfile) : [];
-    return {
-      profiles: profiles.length ? profiles : [normalizeStoredProfile(DEFAULT_OWNER_PROFILE)],
-    };
-  } catch {
-    return { profiles: [normalizeStoredProfile(DEFAULT_OWNER_PROFILE)] };
-  }
-}
-
-async function writeStore(store: UserProfileStore) {
-  await mkdir(path.dirname(STORE_PATH), { recursive: true });
-  await writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
-}
-
 export async function GET() {
-  const store = await readStore();
-  return NextResponse.json({ profiles: store.profiles.map(publicProfile) });
+  const store = await readUserProfileStore();
+  return NextResponse.json({ profiles: store.profiles.map(publicUserProfile) });
 }
 
 export async function POST(request: NextRequest) {
@@ -129,14 +39,14 @@ export async function POST(request: NextRequest) {
     password?: unknown;
     notes?: unknown;
   };
-  const action = safeText(payload.action, "upsert");
-  const store = await readStore();
-  const id = safeText(payload.id);
+  const action = safeProfileText(payload.action, "upsert");
+  const store = await readUserProfileStore();
+  const id = safeProfileText(payload.id);
 
   if (action === "delete") {
     const nextProfiles = store.profiles.filter((profile) => profile.id !== id);
-    await writeStore({ profiles: nextProfiles });
-    return NextResponse.json({ ok: true, profiles: nextProfiles.map(publicProfile) });
+    await writeUserProfileStore({ profiles: nextProfiles });
+    return NextResponse.json({ ok: true, profiles: nextProfiles.map(publicUserProfile) });
   }
 
   if (action !== "upsert") {
@@ -145,29 +55,29 @@ export async function POST(request: NextRequest) {
 
   const now = Date.now();
   const existing = id ? store.profiles.find((profile) => profile.id === id) : undefined;
-  const password = safeText(payload.password);
-  const passwordUpdate = password ? hashPassword(password) : null;
-  const profile = normalizeStoredProfile({
+  const password = safeProfileText(payload.password);
+  const passwordUpdate = password ? hashProfilePassword(password) : null;
+  const profile = normalizeStoredUserProfile({
     ...existing,
-    id: existing?.id ?? generateId(),
-    displayName: safeText(payload.displayName),
-    username: safeText(payload.username),
-    email: safeText(payload.email),
+    id: existing?.id ?? generateProfileId(),
+    displayName: safeProfileText(payload.displayName),
+    username: safeProfileText(payload.username),
+    email: safeProfileText(payload.email),
     role: normalizeProfileRole(payload.role),
-    telegramChatId: safeText(payload.telegramChatId),
-    remoteDomains: splitDomains(payload.remoteDomains),
+    telegramChatId: safeProfileText(payload.telegramChatId),
+    remoteDomains: splitProfileDomains(payload.remoteDomains),
     accessModes: normalizeAccessModes(payload.accessModes),
     authProviders: normalizeAuthProviders(payload.authProviders),
-    googleSubject: safeText(payload.googleSubject),
+    googleSubject: safeProfileText(payload.googleSubject),
     passkeyCredentialIds: Array.isArray(payload.passkeyCredentialIds)
-      ? payload.passkeyCredentialIds.map((item) => safeText(item)).filter(Boolean)
+      ? payload.passkeyCredentialIds.map((item) => safeProfileText(item)).filter(Boolean)
       : existing?.passkeyCredentialIds,
-    notes: safeText(payload.notes),
+    notes: safeProfileText(payload.notes),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     passwordHash: passwordUpdate?.hash ?? existing?.passwordHash ?? "",
     passwordSalt: passwordUpdate?.salt ?? existing?.passwordSalt ?? "",
-    passwordIterations: passwordUpdate?.iterations ?? existing?.passwordIterations ?? PASSWORD_ITERATIONS,
+    passwordIterations: passwordUpdate?.iterations ?? existing?.passwordIterations,
   });
 
   if (!profile.email || !profile.username) {
@@ -186,6 +96,6 @@ export async function POST(request: NextRequest) {
   }
 
   const profiles = [profile, ...withoutCurrent].sort((a, b) => b.updatedAt - a.updatedAt);
-  await writeStore({ profiles });
-  return NextResponse.json({ ok: true, profile: publicProfile(profile), profiles: profiles.map(publicProfile) });
+  await writeUserProfileStore({ profiles });
+  return NextResponse.json({ ok: true, profile: publicUserProfile(profile), profiles: profiles.map(publicUserProfile) });
 }

@@ -32,12 +32,18 @@ export function normalizeCurrentUserContext(
 
 export function buildCurrentUserSystemNote(context?: CurrentUserContext) {
   const currentUser = normalizeCurrentUserContext(context);
+  const isRichard =
+    currentUser.displayName.toLowerCase().includes("richard") ||
+    currentUser.username.toLowerCase() === "tacimpulse";
+  const defaultSpeakerNote = isRichard
+    ? "Unless the latest user message explicitly says another person is present or speaking, treat the current speaker as Richard / TacImpulse."
+    : `Unless the latest user message explicitly says another person is present or speaking, treat the current speaker as ${currentUser.displayName} / ${currentUser.username}.`;
 
   return [
     `Current default UVB user: ${currentUser.displayName}.`,
     `Username: ${currentUser.username}.`,
     `Telegram chat ID: ${currentUser.telegramChatId}.`,
-    "Unless the latest user message explicitly says another person is present or speaking, treat the current speaker as Richard / TacImpulse.",
+    defaultSpeakerNote,
     "Jusstin is a separate person and friend, never the default speaker inferred from alias rules or chat history.",
     PROFILE_ANCHOR_NOTE,
   ].join(" ");

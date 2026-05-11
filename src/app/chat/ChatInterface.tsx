@@ -676,6 +676,7 @@ export default function ChatInterface() {
     isRecording,
     setIsRecording,
     setAvatarActivity,
+    currentUser,
   } =
     useAppStore();
   const [input, setInput] = useState("");
@@ -687,10 +688,14 @@ export default function ChatInterface() {
     loadIdentitySettings()
   );
   const currentUserContext: CurrentUserContext = {
-    displayName: identitySettings.userName || DEFAULT_CURRENT_USER_CONTEXT.displayName,
-    username: DEFAULT_CURRENT_USER_CONTEXT.username,
-    email: identitySettings.userEmail || DEFAULT_CURRENT_USER_CONTEXT.email,
-    telegramChatId: DEFAULT_CURRENT_USER_CONTEXT.telegramChatId,
+    displayName:
+      currentUser?.displayName ||
+      currentUser?.name ||
+      identitySettings.userName ||
+      DEFAULT_CURRENT_USER_CONTEXT.displayName,
+    username: currentUser?.username || DEFAULT_CURRENT_USER_CONTEXT.username,
+    email: currentUser?.email || identitySettings.userEmail || DEFAULT_CURRENT_USER_CONTEXT.email,
+    telegramChatId: currentUser?.telegramChatId || DEFAULT_CURRENT_USER_CONTEXT.telegramChatId,
   };
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
   const [activityStatus, setActivityStatus] = useState("Ready for text, voice, and media.");

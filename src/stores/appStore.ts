@@ -39,8 +39,12 @@ export interface ChatThread {
 
 export interface UserProfile {
   id: string;
-  name: string;
+  name?: string;
+  displayName?: string;
+  username?: string;
   email: string;
+  role?: string;
+  telegramChatId?: string;
   avatar?: string;
   createdAt: number;
 }
