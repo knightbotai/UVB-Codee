@@ -38,6 +38,14 @@ export const VOICE_SETTINGS_UPDATED_EVENT = "uvb:voice-settings-updated";
 const LEGACY_DEFAULT_STT_MODEL = "Systran/faster-whisper-large-v3";
 const LEGACY_INVALID_TTS_VOICES = new Set(["af_sophia"]);
 
+export interface TtsRequestSettings {
+  provider: VoiceSettings["liveTtsProvider"];
+  label: string;
+  endpoint: string;
+  voice: string;
+  model?: string;
+}
+
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   sttUrl: "http://127.0.0.1:8001/v1/audio/transcriptions",
   sttModel: "Systran/faster-distil-whisper-large-v3",
@@ -149,4 +157,32 @@ export function saveVoiceSettings(settings: VoiceSettings) {
     JSON.stringify(normalizeVoiceSettings(settings))
   );
   window.dispatchEvent(new CustomEvent(VOICE_SETTINGS_UPDATED_EVENT));
+}
+
+export function resolveTtsRequestSettings(settings: VoiceSettings): TtsRequestSettings {
+  if (settings.liveTtsProvider === "orpheus-fastapi") {
+    return {
+      provider: "orpheus-fastapi",
+      label: "Orpheus",
+      endpoint: settings.orpheusTtsUrl,
+      voice: settings.orpheusVoice,
+      model: settings.orpheusModel,
+    };
+  }
+
+  if (settings.liveTtsProvider === "moss-tts-nano" || settings.liveTtsProvider === "moss-ttsd") {
+    return {
+      provider: settings.liveTtsProvider,
+      label: settings.liveTtsProvider === "moss-tts-nano" ? "MOSS Nano" : "MOSS TTSD",
+      endpoint: settings.mossTtsUrl,
+      voice: settings.mossTtsVoice,
+    };
+  }
+
+  return {
+    provider: "kokoro",
+    label: "Kokoro",
+    endpoint: settings.ttsUrl,
+    voice: settings.ttsVoice,
+  };
 }

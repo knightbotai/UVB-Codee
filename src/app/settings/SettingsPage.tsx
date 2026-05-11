@@ -19,6 +19,7 @@ import {
 } from "@/lib/modelSettings";
 import {
   loadVoiceSettings,
+  resolveTtsRequestSettings,
   saveVoiceSettings,
   type VoiceSettings,
 } from "@/lib/voiceSettings";
@@ -697,13 +698,16 @@ export default function SettingsPage() {
     setVoiceStatus({ state: "testing", message: "Testing voice endpoints..." });
 
     try {
+      const ttsRequest = resolveTtsRequestSettings(voiceSettings);
       const ttsResponse = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: "UVB voice bridge is online.",
-          endpoint: voiceSettings.ttsUrl,
-          voice: voiceSettings.ttsVoice,
+          endpoint: ttsRequest.endpoint,
+          voice: ttsRequest.voice,
+          provider: ttsRequest.provider,
+          model: ttsRequest.model,
         }),
       });
 
@@ -718,7 +722,7 @@ export default function SettingsPage() {
 
       setVoiceStatus({
         state: "connected",
-        message: "TTS responded. STT will be tested from the chat mic with real audio.",
+        message: `${ttsRequest.label} responded. STT will be tested from the chat mic with real audio.`,
       });
       return true;
     } catch (error) {
@@ -1404,10 +1408,10 @@ export default function SettingsPage() {
                               })
                             }
                           >
-                            <option value="websocket">WebSocket local first</option>
-                            <option value="small-webrtc">Pipecat SmallWebRTC next</option>
-                            <option value="webrtc">WebRTC staged</option>
-                            <option value="livekit">LiveKit later</option>
+                            <option value="websocket">WebSocket browser VAD fallback</option>
+                            <option value="small-webrtc">Pipecat SmallWebRTC active</option>
+                            <option value="webrtc">WebRTC alias / compatibility</option>
+                            <option value="livekit">LiveKit not installed yet</option>
                           </select>
                         </div>
                         <div>
@@ -1424,9 +1428,9 @@ export default function SettingsPage() {
                               })
                             }
                           >
-                            <option value="browser-manual">Manual stop/send baseline</option>
-                            <option value="silero">Silero VAD staged</option>
-                            <option value="ten-vad">TEN VAD / Turn Detection staged</option>
+                            <option value="browser-manual">Browser RMS auto-send</option>
+                            <option value="silero">Silero VAD active in Pipecat</option>
+                            <option value="ten-vad">TEN VAD not installed yet</option>
                           </select>
                         </div>
                         <div className="col-span-2 rounded-lg border border-uvb-steel-blue/20 bg-uvb-steel-blue/10 p-3">
@@ -1459,9 +1463,9 @@ export default function SettingsPage() {
                               })
                             }
                           >
-                            <option value="faster-whisper">Faster Whisper fallback</option>
+                            <option value="faster-whisper">Faster Whisper local active</option>
                             <option value="parakeet-realtime-eou">
-                              Parakeet Realtime EOU staged
+                              Parakeet Realtime EOU not installed yet
                             </option>
                             <option value="custom">Custom provider</option>
                           </select>
@@ -1480,13 +1484,13 @@ export default function SettingsPage() {
                               })
                             }
                           >
-                            <option value="kokoro">Kokoro fallback</option>
+                            <option value="kokoro">Kokoro local active</option>
                             <option value="piper-local">Piper local Pipecat TTS</option>
                             <option value="orpheus-fastapi">Orpheus FastAPI streaming local</option>
-                            <option value="moss-tts-nano">MOSS-TTS-Nano candidate</option>
-                            <option value="moss-ttsd">MOSS-TTSD expressive candidate</option>
-                            <option value="chatterbox-turbo">Chatterbox Turbo staged</option>
-                            <option value="vibevoice-realtime">VibeVoice Realtime staged</option>
+                            <option value="moss-tts-nano">MOSS-TTS-Nano not installed yet</option>
+                            <option value="moss-ttsd">MOSS-TTSD not installed yet</option>
+                            <option value="chatterbox-turbo">Chatterbox Turbo not installed yet</option>
+                            <option value="vibevoice-realtime">VibeVoice Realtime not installed yet</option>
                             <option value="custom">Custom provider</option>
                           </select>
                         </div>

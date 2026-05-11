@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncGenerator
 from typing import Any
 import traceback
 
+import aiohttp
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
 )
 from pipecat.processors.audio.vad_processor import VADProcessor
+from pipecat.frames.frames import ErrorFrame, Frame
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.stt import OpenAISTTService
 from pipecat.services.openai.tts import OpenAITTSService
@@ -83,12 +86,73 @@ def normalize_base_url(value: str) -> str:
     return value.removesuffix("/audio/transcriptions").removesuffix("/audio/speech")
 
 
+def normalize_speech_url(value: str) -> str:
+    value = value.strip().rstrip("/")
+    if value.endswith("/v1"):
+        return f"{value}/audio/speech"
+    return value
+
+
 def truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def provider(value: Any, fallback: str) -> str:
     return str(value or fallback).strip().lower()
+
+
+class OrpheusFastAPITTSService(OpenAITTSService):
+    """Pipecat TTS adapter for Orpheus-FastAPI's WAV speech endpoint."""
+
+    def __init__(self, *, endpoint: str, model: str, voice: str):
+        super().__init__(
+            api_key="uvb-local",
+            base_url=normalize_base_url(endpoint),
+            model=model,
+            voice="alloy",
+            sample_rate=24000,
+        )
+        self._orpheus_endpoint = normalize_speech_url(endpoint)
+        self._orpheus_model = model
+        self._orpheus_voice = voice
+
+    async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
+        payload = {
+            "input": text,
+            "model": self._orpheus_model,
+            "voice": self._orpheus_voice,
+            "response_format": "wav",
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self._orpheus_endpoint,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=180,
+                ) as response:
+                    if response.status >= 400:
+                        error = await response.text()
+                        yield ErrorFrame(
+                            error=f"Orpheus TTS returned {response.status}: {error}"
+                        )
+                        return
+
+                    await self.start_tts_usage_metrics(text)
+
+                    async def chunks() -> AsyncGenerator[bytes, None]:
+                        async for chunk in response.content.iter_chunked(self.chunk_size):
+                            if chunk:
+                                yield chunk
+
+                    async for frame in self._stream_audio_frames_from_iterator(
+                        chunks(),
+                        strip_wav_header=True,
+                        context_id=context_id,
+                    ):
+                        yield frame
+        except Exception as exc:  # noqa: BLE001 - surface to Pipecat client.
+            yield ErrorFrame(error=f"Orpheus TTS failed: {exc}")
 
 
 def append_alias_system_note(value: str) -> str:
@@ -263,17 +327,14 @@ def create_app() -> FastAPI:
                     kwargs["config_path"] = config_path
                 tts = PiperTTSService(**kwargs)
             elif tts_provider == "orpheus-fastapi":
-                tts = OpenAITTSService(
-                    api_key=str(model_settings.get("apiKey") or env("UVB_LLM_API_KEY", "uvb-local")),
-                    base_url=normalize_base_url(
-                        str(
-                            voice_settings.get("orpheusTtsUrl")
-                            or env("UVB_ORPHEUS_TTS_URL", "http://127.0.0.1:5005/v1")
-                        )
+                tts = OrpheusFastAPITTSService(
+                    endpoint=str(
+                        voice_settings.get("orpheusTtsUrl")
+                        or env("UVB_ORPHEUS_TTS_URL", "http://127.0.0.1:5005/v1/audio/speech")
                     ),
                     model=str(
                         voice_settings.get("orpheusModel")
-                        or env("UVB_ORPHEUS_MODEL", "orpheus")
+                        or env("UVB_ORPHEUS_MODEL", "Orpheus-3b-FT-Q2_K.gguf")
                     ),
                     voice=str(
                         voice_settings.get("orpheusVoice")

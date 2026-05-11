@@ -8,6 +8,8 @@ interface TtsRequestBody {
   input?: string;
   endpoint?: string;
   voice?: string;
+  provider?: string;
+  model?: string;
 }
 
 function sanitizeTextForSpeech(text: string) {
@@ -38,6 +40,8 @@ export async function POST(request: NextRequest) {
 
   const endpoint = body.endpoint?.trim() || DEFAULT_TTS_URL;
   const voice = body.voice?.trim() || DEFAULT_TTS_VOICE;
+  const provider = body.provider?.trim() || "kokoro";
+  const model = body.model?.trim();
 
   const synthesize = (selectedVoice: string) =>
     fetch(endpoint, {
@@ -46,6 +50,9 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         input: text,
         voice: selectedVoice,
+        ...(model ? { model } : {}),
+        ...(provider === "orpheus-fastapi" ? { response_format: "wav" } : {}),
+        ...(provider.startsWith("moss-") ? { response_format: "mp3" } : {}),
       }),
     });
 

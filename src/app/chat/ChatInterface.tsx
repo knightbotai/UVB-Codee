@@ -37,6 +37,7 @@ import {
 import {
   DEFAULT_VOICE_SETTINGS,
   loadVoiceSettings,
+  resolveTtsRequestSettings,
   saveVoiceSettings,
   VOICE_SETTINGS_UPDATED_EVENT,
   type VoiceSettings,
@@ -1221,15 +1222,18 @@ export default function ChatInterface() {
       const chunk = chunks[index];
       if (!chunk) return;
       const partLabel = chunks.length > 1 ? ` (${index + 1}/${chunks.length})` : "";
+      const ttsRequest = resolveTtsRequestSettings(loadVoiceSettings());
 
-      setActivityStatus(`Speaking with Kokoro${partLabel}...`);
+      setActivityStatus(`Speaking with ${ttsRequest.label}${partLabel}...`);
       const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: chunk,
-          endpoint: voiceSettings.ttsUrl,
-          voice: voiceSettings.ttsVoice,
+          endpoint: ttsRequest.endpoint,
+          voice: ttsRequest.voice,
+          provider: ttsRequest.provider,
+          model: ttsRequest.model,
         }),
       });
 
