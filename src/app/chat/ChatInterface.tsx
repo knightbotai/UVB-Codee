@@ -81,6 +81,7 @@ const MAX_CHAT_HISTORY_MESSAGES = 16;
 const MAX_CHAT_HISTORY_TEXT_CHARS = 6_000;
 const LONG_FORM_MAX_TOKENS = 6144;
 const WEB_TTS_CHUNK_CHARS = 3200;
+const ORPHEUS_TTS_CHUNK_CHARS = 180;
 const IMAGE_FILE_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -464,9 +465,11 @@ function sanitizeTextForSpeech(text: string) {
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
     .replace(/#{2,}/g, "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*([^*\n]{1,160})\*/g, "")
     .replace(/__(.*?)__/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\s{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -477,19 +480,19 @@ function wantsLongFormResponse(text: string) {
   );
 }
 
-function splitTextForSpeech(text: string) {
+function splitTextForSpeech(text: string, maxChars = WEB_TTS_CHUNK_CHARS) {
   const cleanText = text.replace(/\s+/g, " ").trim();
   if (!cleanText) return [];
 
   const chunks: string[] = [];
   let remaining = cleanText;
   while (remaining.length) {
-    if (remaining.length <= WEB_TTS_CHUNK_CHARS) {
+    if (remaining.length <= maxChars) {
       chunks.push(remaining);
       break;
     }
 
-    const windowText = remaining.slice(0, WEB_TTS_CHUNK_CHARS);
+    const windowText = remaining.slice(0, maxChars);
     const paragraphBreak = windowText.lastIndexOf("\n\n");
     const sentenceBreak = Math.max(
       windowText.lastIndexOf(". "),
@@ -500,21 +503,38 @@ function splitTextForSpeech(text: string) {
     const commaBreak = Math.max(windowText.lastIndexOf(", "), windowText.lastIndexOf(": "));
     const spaceBreak = windowText.lastIndexOf(" ");
     const breakAt =
-      paragraphBreak > Math.floor(WEB_TTS_CHUNK_CHARS * 0.35)
+      paragraphBreak > Math.floor(maxChars * 0.35)
         ? paragraphBreak
-        : sentenceBreak > Math.floor(WEB_TTS_CHUNK_CHARS * 0.45)
+        : sentenceBreak > Math.floor(maxChars * 0.25)
           ? sentenceBreak + 1
-          : commaBreak > Math.floor(WEB_TTS_CHUNK_CHARS * 0.55)
+          : commaBreak > Math.floor(maxChars * 0.45)
             ? commaBreak + 1
-            : spaceBreak > Math.floor(WEB_TTS_CHUNK_CHARS * 0.5)
+            : spaceBreak > Math.floor(maxChars * 0.5)
               ? spaceBreak
-              : WEB_TTS_CHUNK_CHARS;
+              : maxChars;
 
     chunks.push(remaining.slice(0, breakAt).trim());
     remaining = remaining.slice(breakAt).trim();
   }
 
   return chunks.filter(Boolean);
+}
+
+function splitOrpheusTextForSpeech(text: string) {
+  const cleanText = text.replace(/\s+/g, " ").trim();
+  if (!cleanText) return [];
+
+  const sentenceMatches =
+    cleanText.match(/[^.!?;]+[.!?;]+(?=\s|$)|[^.!?;]+$/g) ?? [cleanText];
+
+  return sentenceMatches
+    .flatMap((sentence) => {
+      const trimmed = sentence.trim();
+      return trimmed.length > ORPHEUS_TTS_CHUNK_CHARS
+        ? splitTextForSpeech(trimmed, ORPHEUS_TTS_CHUNK_CHARS)
+        : [trimmed];
+    })
+    .filter(Boolean);
 }
 
 interface ChatConfig {
@@ -1211,7 +1231,11 @@ export default function ChatInterface() {
   const speakText = async (text: string, options: { force?: boolean } = {}) => {
     const speechText = sanitizeTextForSpeech(text);
     if ((!options.force && !voiceSettings.autoSpeak) || !speechText) return;
-    const chunks = splitTextForSpeech(speechText);
+    const activeTtsRequest = resolveTtsRequestSettings(loadVoiceSettings());
+    const chunks =
+      activeTtsRequest.provider === "orpheus-fastapi"
+        ? splitOrpheusTextForSpeech(speechText)
+        : splitTextForSpeech(speechText, WEB_TTS_CHUNK_CHARS);
     if (!chunks.length) return;
 
     const runId = Date.now();
@@ -1222,7 +1246,7 @@ export default function ChatInterface() {
       const chunk = chunks[index];
       if (!chunk) return;
       const partLabel = chunks.length > 1 ? ` (${index + 1}/${chunks.length})` : "";
-      const ttsRequest = resolveTtsRequestSettings(loadVoiceSettings());
+      const ttsRequest = activeTtsRequest;
 
       setActivityStatus(`Speaking with ${ttsRequest.label}${partLabel}...`);
       const response = await fetch("/api/tts", {

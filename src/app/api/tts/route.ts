@@ -17,9 +17,11 @@ function sanitizeTextForSpeech(text: string) {
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
     .replace(/#{2,}/g, "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*([^*\n]{1,160})\*/g, "")
     .replace(/__(.*?)__/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\s{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
