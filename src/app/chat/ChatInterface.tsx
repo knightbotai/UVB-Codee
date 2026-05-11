@@ -81,7 +81,8 @@ const MAX_CHAT_HISTORY_MESSAGES = 16;
 const MAX_CHAT_HISTORY_TEXT_CHARS = 6_000;
 const LONG_FORM_MAX_TOKENS = 6144;
 const WEB_TTS_CHUNK_CHARS = 3200;
-const ORPHEUS_TTS_CHUNK_CHARS = 180;
+const ORPHEUS_TTS_CHUNK_CHARS = 260;
+const ORPHEUS_TTS_MIN_CHUNK_CHARS = 70;
 const IMAGE_FILE_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -527,14 +528,47 @@ function splitOrpheusTextForSpeech(text: string) {
   const sentenceMatches =
     cleanText.match(/[^.!?;]+[.!?;]+(?=\s|$)|[^.!?;]+$/g) ?? [cleanText];
 
-  return sentenceMatches
-    .flatMap((sentence) => {
-      const trimmed = sentence.trim();
-      return trimmed.length > ORPHEUS_TTS_CHUNK_CHARS
-        ? splitTextForSpeech(trimmed, ORPHEUS_TTS_CHUNK_CHARS)
-        : [trimmed];
-    })
-    .filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const sentence of sentenceMatches) {
+    const trimmed = sentence.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.length > ORPHEUS_TTS_CHUNK_CHARS) {
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+      chunks.push(...splitTextForSpeech(trimmed, ORPHEUS_TTS_CHUNK_CHARS));
+      continue;
+    }
+
+    const next = current ? `${current} ${trimmed}` : trimmed;
+    if (next.length <= ORPHEUS_TTS_CHUNK_CHARS) {
+      current = next;
+      continue;
+    }
+
+    if (current) chunks.push(current);
+    current = trimmed;
+  }
+
+  if (current) chunks.push(current);
+
+  return chunks.reduce<string[]>((packed, chunk) => {
+    const previous = packed.at(-1);
+    if (
+      previous &&
+      chunk.length < ORPHEUS_TTS_MIN_CHUNK_CHARS &&
+      `${previous} ${chunk}`.length <= ORPHEUS_TTS_CHUNK_CHARS
+    ) {
+      packed[packed.length - 1] = `${previous} ${chunk}`;
+      return packed;
+    }
+    packed.push(chunk);
+    return packed;
+  }, []);
 }
 
 interface ChatConfig {
