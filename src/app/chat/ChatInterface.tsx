@@ -1265,7 +1265,13 @@ export default function ChatInterface() {
   const speakText = async (text: string, options: { force?: boolean } = {}) => {
     const speechText = sanitizeTextForSpeech(text);
     if ((!options.force && !voiceSettings.autoSpeak) || !speechText) return;
-    const activeTtsRequest = resolveTtsRequestSettings(loadVoiceSettings());
+    const voiceSettingsSnapshot = loadVoiceSettings();
+    const activeTtsRequest = resolveTtsRequestSettings(voiceSettingsSnapshot);
+    const fallbackTtsRequest = resolveTtsRequestSettings({
+      ...voiceSettingsSnapshot,
+      liveTtsProvider: "kokoro",
+    });
+    let responseTtsRequest = activeTtsRequest;
     const chunks =
       activeTtsRequest.provider === "orpheus-fastapi"
         ? splitOrpheusTextForSpeech(speechText)
@@ -1280,7 +1286,7 @@ export default function ChatInterface() {
       const chunk = chunks[index];
       if (!chunk) return;
       const partLabel = chunks.length > 1 ? ` (${index + 1}/${chunks.length})` : "";
-      const ttsRequest = activeTtsRequest;
+      const ttsRequest = responseTtsRequest;
 
       setActivityStatus(`Speaking with ${ttsRequest.label}${partLabel}...`);
       const response = await fetch("/api/tts", {
@@ -1303,6 +1309,9 @@ export default function ChatInterface() {
       const audioBlob = await response.blob();
       const providerFallback = response.headers.get("X-UVB-TTS-Provider-Fallback");
       const fallbackReason = response.headers.get("X-UVB-TTS-Fallback-Reason");
+      if (providerFallback && activeTtsRequest.provider === "orpheus-fastapi") {
+        responseTtsRequest = fallbackTtsRequest;
+      }
       const audioUrl = URL.createObjectURL(audioBlob);
 
       if (!audioPlayerRef.current) {

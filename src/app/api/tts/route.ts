@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const DEFAULT_TTS_URL = process.env.UVB_TTS_URL ?? "http://127.0.0.1:8880/v1/audio/speech";
 const DEFAULT_TTS_VOICE = process.env.UVB_TTS_VOICE ?? "af_nova";
 const ORPHEUS_TTS_TIMEOUT_MS = Number.parseInt(
-  process.env.UVB_ORPHEUS_TTS_TIMEOUT_MS ?? "12000",
+  process.env.UVB_ORPHEUS_TTS_TIMEOUT_MS ?? "20000",
   10
 );
 
