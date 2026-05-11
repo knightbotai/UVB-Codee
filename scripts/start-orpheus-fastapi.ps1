@@ -26,6 +26,7 @@ ORPHEUS_TEMPERATURE=0.6
 ORPHEUS_TOP_P=0.9
 ORPHEUS_SAMPLE_RATE=24000
 ORPHEUS_MODEL_NAME=$modelName
+ORPHEUS_SNAC_DEVICE=cpu
 ORPHEUS_PORT=5005
 ORPHEUS_HOST=0.0.0.0
 UID=1000
@@ -33,7 +34,38 @@ GID=1000
 "@
 Set-Content -Path $envPath -Value $envContent -Encoding UTF8
 
-$args = @("compose", "-f", "docker-compose-gpu.yml", "up")
+$speechPipePath = Join-Path $SidecarRoot "tts_engine\speechpipe.py"
+if (Test-Path $speechPipePath) {
+  $speechPipe = Get-Content -Raw -Path $speechPipePath
+  $needle = '# Check if CUDA is available and set device accordingly
+snac_device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"'
+  $replacement = '# Check if CUDA is available and set device accordingly. UVB can force CPU here
+# while keeping llama.cpp on GPU, which avoids unsupported CUDA kernels on
+# very new cards such as RTX 50-series before matching PyTorch wheels exist.
+forced_snac_device = os.environ.get("ORPHEUS_SNAC_DEVICE", "").strip().lower()
+if forced_snac_device in {"cpu", "cuda", "mps"}:
+    snac_device = forced_snac_device
+else:
+    snac_device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"'
+  if ($speechPipe.Contains($needle)) {
+    Set-Content -Path $speechPipePath -Value $speechPipe.Replace($needle, $replacement) -Encoding UTF8
+  }
+}
+
+$overridePath = Join-Path $SidecarRoot "docker-compose-uvb.override.yml"
+$overrideContent = @"
+services:
+  llama-cpp-server:
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5006/health || curl -fsS http://localhost:5006/v1/models || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+"@
+Set-Content -Path $overridePath -Value $overrideContent -Encoding UTF8
+
+$args = @("compose", "-f", "docker-compose-gpu.yml", "-f", "docker-compose-uvb.override.yml", "up", "--build")
 if (-not $Foreground) {
   $args += "-d"
 }

@@ -63,7 +63,7 @@ DEFAULT_VOICE_SETTINGS = {
     "mossTtsVoice": os.getenv("UVB_MOSS_TTS_VOICE", "default"),
     "orpheusTtsUrl": os.getenv("UVB_ORPHEUS_TTS_URL", "http://127.0.0.1:5005/v1/audio/speech"),
     "orpheusVoice": os.getenv("UVB_ORPHEUS_VOICE", "tara"),
-    "orpheusModel": os.getenv("UVB_ORPHEUS_MODEL", "orpheus"),
+    "orpheusModel": os.getenv("UVB_ORPHEUS_MODEL", "Orpheus-3b-FT-Q2_K.gguf"),
     "systemPrompt": (
         "You are KnightBot inside UVB, a local multimodal AI workspace. Be direct, "
         "useful, warm, and concise. You are speaking through the realtime voice "
@@ -405,7 +405,7 @@ async def synthesize_speech(text: str, voice_settings: dict[str, Any]) -> tuple[
             or os.getenv("UVB_ORPHEUS_MODEL")
             or DEFAULT_VOICE_SETTINGS["orpheusModel"]
         )
-        payload["response_format"] = "mp3"
+        payload["response_format"] = "wav"
     if provider.startswith("moss-"):
         payload["response_format"] = "mp3"
 
@@ -422,7 +422,7 @@ async def synthesize_speech(text: str, voice_settings: dict[str, Any]) -> tuple[
                     f"TTS returned {response.status}: {body.decode(errors='ignore')}"
                 )
             content_type = response.headers.get("content-type") or (
-                "audio/mpeg" if provider.startswith("moss-") or provider == "orpheus-fastapi" else "audio/wav"
+                "audio/mpeg" if provider.startswith("moss-") else "audio/wav"
             )
             return body, now_ms() - started, content_type
 
