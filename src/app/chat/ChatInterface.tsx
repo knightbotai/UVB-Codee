@@ -66,9 +66,9 @@ const LIVE_VOICE_MIN_RMS_DELTA = 0.014;
 const LIVE_VOICE_NOISE_MULTIPLIER = 2.1;
 const LIVE_VOICE_SILENCE_MS = 950;
 const LIVE_VOICE_MIN_TURN_MS = 500;
-const LIVE_VOICE_STOP_FLUSH_MS = 2400;
-const LIVE_VOICE_FINAL_FLUSH_MS = 1500;
-const LIVE_VOICE_BUSY_RETRY_MS = 900;
+const LIVE_VOICE_STOP_FLUSH_MS = 650;
+const LIVE_VOICE_FINAL_FLUSH_MS = 350;
+const LIVE_VOICE_BUSY_RETRY_MS = 500;
 const MAX_IMAGE_ATTACHMENTS = 4;
 const MAX_SOURCE_IMAGE_BYTES = 96 * 1024 * 1024;
 const MAX_MODEL_IMAGE_PIXELS = 1_200_000;
@@ -2248,7 +2248,9 @@ export default function ChatInterface() {
               ? "Heard you. Holding for a brief pause before answering..."
               : "Heard you. Waiting for transcript..."
           );
-          scheduleLiveVoiceTurnFlush(LIVE_VOICE_STOP_FLUSH_MS);
+          if (!currentVoiceSettings.liveFullPipeline) {
+            scheduleLiveVoiceTurnFlush(LIVE_VOICE_STOP_FLUSH_MS);
+          }
         },
         onUserTranscript: (data: PipecatTranscriptData) => {
           const transcript = applyNameAliases(
@@ -2264,8 +2266,12 @@ export default function ChatInterface() {
             pipecatPendingTranscriptRef.current,
             transcript
           );
-          setActivityStatus("Transcript captured. Pause briefly and UVB will answer.");
-          if (!liveUserSpeakingRef.current) {
+          setActivityStatus(
+            currentVoiceSettings.liveFullPipeline
+              ? "Transcript captured. Pipecat is answering through the realtime pipeline..."
+              : "Transcript captured. Pause briefly and UVB will answer."
+          );
+          if (!currentVoiceSettings.liveFullPipeline && !liveUserSpeakingRef.current) {
             scheduleLiveVoiceTurnFlush(LIVE_VOICE_FINAL_FLUSH_MS);
           }
         },
@@ -2281,9 +2287,8 @@ export default function ChatInterface() {
           liveTurnStateRef.current = "idle";
           setLiveVoicePhase("idle");
           setActivityStatus("Pipecat live voice ready for the next turn.");
-          if (!pipecatPendingTranscriptRef.current.trim()) {
-            setLiveTranscript("");
-          }
+          pipecatPendingTranscriptRef.current = "";
+          setLiveTranscript("");
         },
         onBotLlmText: (data) => {
           if (!data.text) return;

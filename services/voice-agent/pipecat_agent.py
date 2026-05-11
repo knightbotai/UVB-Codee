@@ -46,6 +46,8 @@ load_dotenv()
 
 HOST = os.getenv("UVB_PIPECAT_HOST", "127.0.0.1")
 PORT = int(os.getenv("UVB_PIPECAT_PORT", "8766"))
+DEFAULT_LIVE_LLM_MAX_TOKENS = int(os.getenv("UVB_PIPECAT_LLM_MAX_TOKENS", "96"))
+DEFAULT_LIVE_LLM_TEMPERATURE = float(os.getenv("UVB_PIPECAT_LLM_TEMPERATURE", "0.35"))
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are KnightBot inside UVB, a local multimodal AI cockpit. Be direct, useful, "
@@ -99,6 +101,20 @@ def truthy(value: Any) -> bool:
 
 def provider(value: Any, fallback: str) -> str:
     return str(value or fallback).strip().lower()
+
+
+def bounded_int(value: Any, fallback: int, minimum: int, maximum: int) -> int:
+    try:
+        return min(maximum, max(minimum, int(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def bounded_float(value: Any, fallback: float, minimum: float, maximum: float) -> float:
+    try:
+        return min(maximum, max(minimum, float(value)))
+    except (TypeError, ValueError):
+        return fallback
 
 
 class OrpheusFastAPITTSService(OpenAITTSService):
@@ -303,6 +319,23 @@ def create_app() -> FastAPI:
                     str(model_settings.get("baseUrl") or env("UVB_LLM_BASE_URL", "http://127.0.0.1:8003/v1"))
                 ),
                 model=str(model_settings.get("model") or env("UVB_LLM_MODEL", "qwen36-35b-a3b-heretic-nvfp4")),
+                params=OpenAILLMService.InputParams(
+                    max_tokens=bounded_int(
+                        voice_settings.get("liveMaxTokens")
+                        or os.getenv("UVB_PIPECAT_LLM_MAX_TOKENS"),
+                        DEFAULT_LIVE_LLM_MAX_TOKENS,
+                        24,
+                        256,
+                    ),
+                    temperature=bounded_float(
+                        voice_settings.get("liveTemperature")
+                        or os.getenv("UVB_PIPECAT_LLM_TEMPERATURE"),
+                        DEFAULT_LIVE_LLM_TEMPERATURE,
+                        0.0,
+                        1.0,
+                    ),
+                    top_p=0.85,
+                ),
             )
             if tts_provider == "piper-local":
                 if PiperTTSService is None:
